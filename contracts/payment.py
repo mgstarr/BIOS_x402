@@ -20,9 +20,9 @@ import json
 from pydantic import BaseModel, ConfigDict, Field
 
 # HTTP header names used to carry x402 payloads between client and server.
-PAYMENT_REQUIRED = "X-Payment-Required"
-PAYMENT_SIGNATURE = "X-Payment-Signature"
-PAYMENT_RESPONSE = "X-Payment-Response"
+PAYMENT_REQUIRED = "PAYMENT-REQUIRED"
+PAYMENT_SIGNATURE = "PAYMENT-SIGNATURE"
+PAYMENT_RESPONSE = "PAYMENT-RESPONSE"
 
 
 class PaymentRequirements(BaseModel):
