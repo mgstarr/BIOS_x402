@@ -1,0 +1,190 @@
+{
+  "_note": "Static sample data for demos. Not live prices, sentiment, or advice.",
+  "as_of": "2026-11-01T00:00:00Z",
+  "prices": {
+    "ETH": {
+      "symbol": "ETH",
+      "name": "Ethereum",
+      "price_usd": 3412.57,
+      "change_24h_pct": 1.84,
+      "high_24h_usd": 3455.1,
+      "low_24h_usd": 3329.42,
+      "volume_24h_usd": 18734520000,
+      "market_cap_usd": 411820000000
+    },
+    "BTC": {
+      "symbol": "BTC",
+      "name": "Bitcoin",
+      "price_usd": 97215.33,
+      "change_24h_pct": -0.62,
+      "high_24h_usd": 98410.0,
+      "low_24h_usd": 96580.15,
+      "volume_24h_usd": 42118900000,
+      "market_cap_usd": 1923400000000
+    },
+    "SOL": {
+      "symbol": "SOL",
+      "name": "Solana",
+      "price_usd": 187.46,
+      "change_24h_pct": 3.27,
+      "high_24h_usd": 190.12,
+      "low_24h_usd": 180.03,
+      "volume_24h_usd": 4208750000,
+      "market_cap_usd": 88910000000
+    }
+  },
+  "sentiment": {
+    "ETH": {
+      "symbol": "ETH",
+      "score": 0.42,
+      "label": "bullish",
+      "window": "24h",
+      "mentions_24h": 184230,
+      "mentions_change_pct": 12.6,
+      "breakdown_pct": {
+        "positive": 54.1,
+        "neutral": 31.7,
+        "negative": 14.2
+      },
+      "top_topics": [
+        "ETF inflows",
+        "L2 fees",
+        "staking yield"
+      ],
+      "sources": [
+        "x",
+        "reddit",
+        "news"
+      ]
+    },
+    "BTC": {
+      "symbol": "BTC",
+      "score": 0.08,
+      "label": "neutral",
+      "window": "24h",
+      "mentions_24h": 412870,
+      "mentions_change_pct": -4.3,
+      "breakdown_pct": {
+        "positive": 38.9,
+        "neutral": 42.6,
+        "negative": 18.5
+      },
+      "top_topics": [
+        "miner selling",
+        "ETF flows",
+        "macro rates"
+      ],
+      "sources": [
+        "x",
+        "reddit",
+        "news"
+      ]
+    },
+    "SOL": {
+      "symbol": "SOL",
+      "score": 0.57,
+      "label": "bullish",
+      "window": "24h",
+      "mentions_24h": 96410,
+      "mentions_change_pct": 21.9,
+      "breakdown_pct": {
+        "positive": 61.3,
+        "neutral": 26.4,
+        "negative": 12.3
+      },
+      "top_topics": [
+        "memecoin volume",
+        "validator upgrade",
+        "DEX activity"
+      ],
+      "sources": [
+        "x",
+        "reddit",
+        "news"
+      ]
+    }
+  },
+  "reports": {
+    "ETH": {
+      "symbol": "ETH",
+      "title": "Ethereum: steady bid as L2 activity climbs",
+      "rating": "accumulate",
+      "risk": "medium",
+      "summary": "ETH is up 1.8% on the day with healthy spot volume. Layer-2 transaction counts hit a monthly high while mainnet fees stay low, and staking participation keeps rising.",
+      "key_levels_usd": {
+        "support": [
+          3330,
+          3200
+        ],
+        "resistance": [
+          3460,
+          3600
+        ]
+      },
+      "metrics": {
+        "staked_supply_pct": 28.4,
+        "l2_tx_7d_change_pct": 9.1,
+        "exchange_netflow_24h_eth": -41200
+      },
+      "risks": [
+        "Fee revenue on mainnet remains low",
+        "Correlation with BTC stays high"
+      ],
+      "outlook_30d": "Range 3,200-3,650 with upside bias if 3,460 breaks."
+    },
+    "BTC": {
+      "symbol": "BTC",
+      "title": "Bitcoin: consolidation below $98k",
+      "rating": "hold",
+      "risk": "low",
+      "summary": "BTC is flat-to-down after a strong week. Spot ETF flows were mixed and miners sent more coins to exchanges, but long-term holders are not selling.",
+      "key_levels_usd": {
+        "support": [
+          96500,
+          94000
+        ],
+        "resistance": [
+          98400,
+          100000
+        ]
+      },
+      "metrics": {
+        "hashrate_eh_s": 812,
+        "etf_netflow_24h_usd": -118000000,
+        "long_term_holder_supply_pct": 74.2
+      },
+      "risks": [
+        "Miner distribution",
+        "Macro rate surprises"
+      ],
+      "outlook_30d": "Chop between 94k and 100k; a daily close above 100k would signal trend continuation."
+    },
+    "SOL": {
+      "symbol": "SOL",
+      "title": "Solana: momentum leader, but stretched",
+      "rating": "accumulate",
+      "risk": "high",
+      "summary": "SOL leads majors at +3.3% on strong DEX and memecoin volume. Network activity is near all-time highs; price is extended short term.",
+      "key_levels_usd": {
+        "support": [
+          180,
+          168
+        ],
+        "resistance": [
+          190,
+          205
+        ]
+      },
+      "metrics": {
+        "dex_volume_24h_usd": 3120000000,
+        "active_addresses_24h": 4810000,
+        "staked_supply_pct": 66.7
+      },
+      "risks": [
+        "Speculative volume can reverse fast",
+        "Higher volatility than BTC/ETH"
+      ],
+      "outlook_30d": "Pullback toward 175-180 likely before any push past 205."
+    }
+  }
+}
