@@ -4,8 +4,9 @@
 //
 // One purchase = all events with the same path + resource (full URL) + request_id:
 //   payment_required -> verified -> settled  (or failed)
-// The row's badge moves along:  402 BILL -> VERIFIED -> PAID / FAILED.
-// A bill nobody paid within 60 seconds shows EXPIRED.
+// The row's status pill moves along:  Waiting for payment -> Paid ✓ / Refused ✗.
+// A bill nobody paid within 60 seconds shows "Bill expired" (hidden unless
+// "Show unpaid bills" is ticked; the counters always count everything).
 // Rows are kept in a Map and UPDATED IN PLACE, so a row doesn't jump or re-animate when
 // its status changes; only the badge flashes.
 
@@ -21,13 +22,16 @@
   let lastEarned = null;
   let clockSkew = 0; // server time - browser time, in seconds
 
+  // "verified" lasts a split second (checked, money being collected): still amber.
   const STATUS = {
-    bill: { label: "402 BILL", cls: "badge-402" },
-    verified: { label: "VERIFIED", cls: "badge-verified" },
-    paid: { label: "PAID", cls: "badge-ok" },
-    failed: { label: "FAILED", cls: "badge-bad" },
-    expired: { label: "EXPIRED", cls: "badge-expired" },
+    bill: { label: "⏳ Waiting for payment", cls: "pill-wait" },
+    verified: { label: "⏳ Waiting for payment", cls: "pill-wait" },
+    paid: { label: "✓ Paid", cls: "pill-paid" },
+    failed: { label: "✗ Refused", cls: "pill-refused" },
+    expired: { label: "⌛ Bill expired", cls: "pill-expired" },
   };
+  let lastEvents = [];
+  const showUnpaid = $("show-unpaid");
   const STEP = { payment_required: "bill", verified: "verified", settled: "paid", failed: "failed" };
 
   function purchaseKey(ev) {
@@ -79,29 +83,23 @@
   function createRow(g) {
     const tr = document.createElement("tr");
     const cells = {
-      time: td("mono"), endpoint: td("mono"), amount: td("num mono"),
-      payer: td("mono hide-sm"), tx: td("mono hide-sm"), status: td(),
+      status: td(), time: td(), what: td("what"), amount: td("num amount"),
+      payer: td("mono hide-sm"), tx: td("mono hide-sm"),
     };
     Object.values(cells).forEach((c) => tr.appendChild(c));
     cells.time.textContent = new Date(g.startTs * 1000).toLocaleTimeString();
     const sym = symbolOf(g.resource);
-    cells.endpoint.textContent = (g.path || "—") + (sym ? ` · ${sym}` : "");
-    if (g.rid) {
-      const rid = document.createElement("span");
-      rid.className = "rid";
-      rid.textContent = `id ${g.rid}`;
-      cells.endpoint.appendChild(rid);
-    }
+    cells.what.append(el("strong", null, productName(g.path)), el("span", null, coinLabel(sym)));
+    if (g.rid) tr.title = `purchase id ${g.rid}`;
     const badge = document.createElement("span");
-    const why = document.createElement("span");
-    why.className = "muted mono why";
+    const why = el("span", "why");
     cells.status.append(badge, why);
     return { tr, cells, badge, why, status: null };
   }
 
   function updateRow(row, g) {
     const c = row.cells;
-    c.amount.textContent = usd(g.amount);
+    c.amount.textContent = g.amount != null ? cents(g.amount) : "—";
     c.payer.textContent = shortHex(g.payer);
     c.payer.title = g.payer || "";
     c.tx.textContent = shortHex(g.tx);
@@ -110,7 +108,7 @@
     const status = statusOf(g);
     if (status !== row.status) {
       const s = STATUS[status];
-      row.badge.className = "badge " + s.cls;
+      row.badge.className = "pill " + s.cls;
       row.badge.textContent = s.label;
       if (row.status !== null) { // flash only on a real change, not on first draw
         void row.badge.offsetWidth; // restart the CSS animation
@@ -118,17 +116,38 @@
       }
       row.status = status;
     }
-    row.why.textContent = g.reason || "";
-    row.badge.title = g.reason || "";
+    // Plain-English reason under the pill; the technical code on hover.
+    row.why.textContent = status === "failed" ? reasonText(g.reason) : "";
+    row.badge.title = status === "failed" ? `${reasonText(g.reason)} (${g.reason || "no reason"})` : "";
+  }
+
+  function placeholder(text) {
+    const tr = document.createElement("tr");
+    const cell = td("empty");
+    cell.colSpan = 6;
+    cell.textContent = text;
+    tr.appendChild(cell);
+    return tr;
   }
 
   function renderFeed(events) {
-    const groups = groupPurchases(events)
+    lastEvents = events;
+    const all = groupPurchases(events);
+    const groups = all
+      .filter((g) => showUnpaid.checked || statusOf(g) !== "expired")
       .sort((a, b) => b.startTs - a.startTs) // newest purchase first
       .slice(0, MAX_ROWS);
-    if (!groups.length) return;
 
     const body = $("feed-body");
+    if (!groups.length) {
+      rows.clear();
+      body.replaceChildren(placeholder(all.length
+        ? "Only expired bills so far. Tick \"Show unpaid bills\" to see them."
+        : "Nothing yet. Go to Home and press \"Watch an AI buy this\"."));
+      firstLoad = false;
+      return;
+    }
+
     const keep = new Set();
     groups.forEach((g, i) => {
       keep.add(g.key);
@@ -205,5 +224,6 @@
     }
   }
 
+  showUnpaid.addEventListener("change", () => renderFeed(lastEvents));
   tick();
 })();

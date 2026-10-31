@@ -43,14 +43,20 @@ DUMMY_PAYER = "0x000000000000000000000000000000000000dEaD"
 DUMMY_SIGNATURE = "0x" + "00" * 65
 
 
-def build_fake_payment(bill: PaymentRequired) -> PaymentPayload:
-    """Agree to the shop's first option, copying its amount, payTo and asset exactly."""
+def build_fake_payment(
+    bill: PaymentRequired, value: str | None = None, to: str | None = None
+) -> PaymentPayload:
+    """Agree to the shop's first option, copying its amount, payTo and asset exactly.
+
+    value / to (optional) change ONLY the signed authorization, to imitate a cheating buyer
+    who copies the bill honestly but signs for less money, or for a different wallet.
+    """
     req = bill.accepts[0]
     now = int(time.time())
     auth = Authorization(
         from_=DUMMY_PAYER,
-        to=req.payTo,
-        value=req.amount,
+        to=to if to is not None else req.payTo,
+        value=value if value is not None else req.amount,
         validAfter=str(now - 60),
         validBefore=str(now + req.maxTimeoutSeconds),
         nonce="0x" + secrets.token_hex(32),

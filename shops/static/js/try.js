@@ -1,117 +1,115 @@
-// "Try it" box on the landing page: shows a real curl.exe command and can run the request.
+// Home page "Watch a payment" box.
+// The SERVER runs the whole purchase through the real paywall (POST /try/simulate, or
+// POST /try/attack for the cheat). This page then plays the 4 steps one by one
+// (about 0.8 s each) and shows the data as a friendly card.
 
 (function () {
-  const pathSel = document.getElementById("try-path");
-  const symSel = document.getElementById("try-symbol");
-  const cmd = document.getElementById("try-cmd");
-  const out = document.getElementById("try-out");
-  const runBtn = document.getElementById("try-run");
+  const STEP_MS = 800;
+  const $ = (id) => document.getElementById(id);
+  const productSel = $("w-product");
+  const coinSel = $("w-coin");
+  const buyBtn = $("w-buy");
+  const cheatBtn = $("w-cheat");
+  const result = $("w-result");
+  const steps = [...document.querySelectorAll("#w-steps .fstep")];
 
-  function url() {
-    return `${window.BASE_URL}${pathSel.value}?symbol=${symSel.value}`;
-  }
-  function render() {
-    cmd.textContent = `curl.exe -i "${url()}"`;
+  function setStep(i, state, text, sub = "") {
+    const s = steps[i];
+    s.classList.remove("active", "done", "bad");
+    if (state) s.classList.add(state);
+    s.querySelector(".ftext").textContent = text;
+    s.querySelector(".fsub").textContent = sub;
   }
 
-  async function run() {
-    runBtn.disabled = true;
-    out.className = "";
-    out.textContent = "…";
+  function resetSteps() {
+    const texts = ["Asking for data", "Bill", "Payment signed", "Check, collect, deliver"];
+    texts.forEach((t, i) => setStep(i, null, t));
+    result.replaceChildren();
+  }
+
+  async function play(cheat) {
+    const path = productSel.value;
+    const symbol = coinSel.value;
+    const what = `${productName(path)} of ${coinName(symbol)}`;
+    const wasBuyDisabled = buyBtn.disabled;
+    buyBtn.disabled = cheatBtn.disabled = true;
+    resetSteps();
+
+    // Start the real purchase now; animate step 1 while it runs.
+    const request = cheat
+      ? postJson("/try/attack", { kind: "underpay", path, symbol })
+      : postJson("/try/simulate", { path, symbol });
+    setStep(0, "active", `Asking for ${what}…`);
+    await sleep(STEP_MS);
+
+    let r;
     try {
-      const resp = await fetch(url(), { cache: "no-store" });
-      const lines = [`HTTP ${resp.status} ${resp.statusText || ""}`.trim()];
-      const bill = resp.headers.get("PAYMENT-REQUIRED");
-      if (bill) {
-        lines.push(`PAYMENT-REQUIRED: ${bill.slice(0, 48)}…`, "");
-        const decoded = b64ToJson(bill);
-        const req = decoded.accepts[0];
-        lines.push(`# decoded bill: pay ${req.amount} atomic units = ${usd(req.amount / 1e6)} USDC`);
-        lines.push(`#               to ${req.payTo} on ${req.network}`, "");
-      }
-      lines.push(pretty(await resp.json()));
-      out.textContent = lines.join("\n");
+      r = await request;
     } catch (err) {
-      out.className = "c";
-      out.textContent = `# request failed: ${err}`;
-    } finally {
-      runBtn.disabled = false;
+      setStep(0, "bad", "Something went wrong", err.message);
+      buyBtn.disabled = wasBuyDisabled;
+      cheatBtn.disabled = false;
+      return;
     }
-  }
+    const [billStep, payStep, paidStep] = r.steps || [];
+    const bill = billStep && billStep.body && billStep.body.accepts ? billStep.body.accepts[0] : null;
+    const auth = payStep ? payStep.payload.payload.authorization : null;
+    setStep(0, "done", `Asked for ${what}`);
 
-  // --- "Simulate paid call (mock)": the server runs the whole flow, we print each step. ---
-  const simBtn = document.getElementById("try-simulate"); // only exists in mock mode
+    // Step 2: the bill
+    setStep(1, "active", "Waiting for the bill…");
+    await sleep(STEP_MS);
+    if (!bill) {
+      setStep(1, "bad", "No bill came back");
+      return finish(r, path, symbol, cheat);
+    }
+    setStep(1, "done", `Bill received: ${atomicCents(bill.amount)} to ${SITE.brand || "TickToll"}`,
+      "Pay within 60 seconds");
 
-  // Long hex strings (signature, nonce) shortened so the payload fits on screen.
-  function shortenPayload(payment) {
-    const copy = JSON.parse(JSON.stringify(payment));
-    const p = copy.payload || {};
-    if (p.signature) p.signature = shortHex(p.signature);
-    if (p.authorization && p.authorization.nonce) p.authorization.nonce = shortHex(p.authorization.nonce);
-    return copy;
-  }
-  const clip = (s, n = 48) => (s && s.length > n ? s.slice(0, n) + "…" : s || "(none)");
-
-  function showSteps(result) {
-    const [bill, pay, paid] = result.steps;
-    const L = [];
-    L.push(`# 1) GET ${result.url}   (no payment)`);
-    L.push(`HTTP ${bill.status}`);
-    L.push(`PAYMENT-REQUIRED: ${clip(bill.header)}`);
-    if (bill.body && bill.body.accepts) {
-      const req = bill.body.accepts[0];
-      L.push(`# the bill: ${req.amount} atomic = ${usd(req.amount / 1e6)} USDC to ${req.payTo}`);
-      if (req.extra && req.extra.requestId) L.push(`#           request id ${req.extra.requestId}`);
+    // Step 3: the signature
+    setStep(2, "active", "Wallet is signing…");
+    await sleep(STEP_MS);
+    if (cheat && auth) {
+      setStep(2, "bad", "Payment signed, but for less",
+        `The cheater signed for ${atomicCents(auth.value)} instead of ${atomicCents(bill.amount)}`);
     } else {
-      L.push(pretty(bill.body));
+      setStep(2, "done", "Payment approved and signed", "Like signing a cheque");
     }
-    if (pay) {
-      L.push("", "# 2) build a mock-signed PaymentPayload (dummy signature, shortened below)");
-      L.push(pretty(shortenPayload(pay.payload)));
+
+    // Step 4: our check
+    setStep(3, "active", "Checking the payment…");
+    await sleep(STEP_MS);
+    if (r.ok) {
+      setStep(3, "done", "Paid ✓, here's the data", "Receipt attached");
+    } else {
+      setStep(3, "bad", `Refused ✗: ${reasonText(r.error, "sentence")}. No data given.`);
     }
-    if (paid) {
-      L.push("", "# 3) retry the same GET with the payment attached");
-      L.push(`PAYMENT-SIGNATURE: ${clip(pay.header)}`);
-      L.push(`HTTP ${paid.status}`);
-      if (paid.receipt) {
-        L.push(`PAYMENT-RESPONSE: ${clip(paid.header)}`, "", "# the receipt (decoded):");
-        L.push(pretty(paid.receipt));
-      }
-      L.push("", paid.status === 200 ? "# the data you paid for:" : "# rejected:");
-      L.push(pretty(paid.body));
-    }
-    L.push("", result.ok ? "# ✔ paid. Open the Live page: this purchase is one row, marked PAID."
-                         : "# ✘ the flow did not finish (see above)");
-    return L.join("\n");
+    finish(r, path, symbol, cheat);
   }
 
-  async function simulate() {
-    simBtn.disabled = true;
-    runBtn.disabled = true;
-    cmd.textContent = `# server-side simulation of ${url()}`;
-    out.className = "";
-    out.textContent = "…";
-    try {
-      const resp = await fetch("/try/simulate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ path: pathSel.value, symbol: symSel.value }),
-      });
-      const result = await resp.json();
-      if (!resp.ok) throw new Error(result.error || `HTTP ${resp.status}`);
-      out.textContent = showSteps(result);
-    } catch (err) {
-      out.className = "c";
-      out.textContent = `# simulation failed: ${err.message || err}`;
-    } finally {
-      simBtn.disabled = false;
-      runBtn.disabled = false;
+  function finish(r, path, symbol, cheat) {
+    const [billStep, payStep, paidStep] = r.steps || [];
+    if (r.ok && paidStep) {
+      result.appendChild(dataCard(path, symbol, paidStep.body));
+    } else if (cheat) {
+      const card = el("div", "data-card refused");
+      card.appendChild(el("div", "dc-label", "Cheat attempt"));
+      card.appendChild(el("div", "dc-big", "Refused. No data, no money moved."));
+      card.appendChild(el("p", "dc-line",
+        "TickToll checks that the signed payment matches the bill exactly before handing over anything."));
+      result.appendChild(card);
     }
+    result.appendChild(techDetails([
+      ["The bill we sent (PAYMENT-REQUIRED, decoded)", billStep && billStep.body],
+      ["The payment the AI signed (PAYMENT-SIGNATURE, decoded)", payStep && payStep.payload],
+      ["The receipt (PAYMENT-RESPONSE, decoded)", paidStep && paidStep.receipt],
+      [paidStep && paidStep.status === 200 ? "The data (response body)" : `Our answer: HTTP ${paidStep ? paidStep.status : "?"}`,
+        paidStep && paidStep.body],
+    ]));
+    buyBtn.disabled = !SITE.mockMode;
+    cheatBtn.disabled = false;
   }
 
-  pathSel.addEventListener("change", render);
-  symSel.addEventListener("change", render);
-  runBtn.addEventListener("click", () => { render(); run(); });
-  if (simBtn) simBtn.addEventListener("click", simulate);
-  render();
+  buyBtn.addEventListener("click", () => play(false));
+  cheatBtn.addEventListener("click", () => play(true));
 })();

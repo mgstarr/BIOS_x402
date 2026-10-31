@@ -11,12 +11,12 @@
   <nav class="nav">
     <div class="wrap">
       <a class="logo" href="{{ url_for('home') }}"><span class="logo-mark">402</span>{{ brand }}</a>
-      {% if mock_mode %}<span class="badge badge-mock" title="MOCK_FACILITATOR=true: payments are checked for shape only, no real money moves">Mock mode</span>{% endif %}
+      {% if mock_mode %}<a class="badge-mock" href="{{ url_for('docs') }}#mock" title="Payments are simulated until our local blockchain is connected. Click to learn more.">Mock mode</a>{% endif %}
       <div class="nav-links">
         {% set p = request.path %}
         <a href="{{ url_for('home') }}" class="{{ 'active' if p == '/' }}">Home</a>
-        <a href="{{ url_for('docs') }}" class="{{ 'active' if p == '/docs' }}">Docs</a>
-        <a href="{{ url_for('live') }}" class="{{ 'active' if p == '/live' }}">Live</a>
+        <a href="{{ url_for('docs') }}" class="{{ 'active' if p == '/docs' }}">How it works</a>
+        <a href="{{ url_for('live') }}" class="{{ 'active' if p == '/live' }}">Live payments</a>
       </div>
     </div>
   </nav>
@@ -28,8 +28,10 @@
   </main>
 
   <footer>
-    <div class="wrap">{{ brand }} · market data for AI agents · x402 v2 on Base Sepolia (testnet) · demo data, not financial advice</div>
+    <div class="wrap">{{ brand }} · a data shop for AI agents · demo with sample data, not financial advice</div>
   </footer>
+  <script>window.SITE = {{ site_info | tojson }};</script>
+  <script src="{{ url_for('static', filename='js/common.js') }}"></script>
   {% block scripts %}{% endblock %}
 </body>
 </html>

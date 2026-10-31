@@ -141,12 +141,13 @@ def payment_required_response(requirements: PaymentRequirements, error: str = "p
     return response
 
 
-# --- Mock facilitator: checks the payment's shape and terms, moves no money -------------
+# --- Terms check (both modes) + mock facilitator (moves no money) ---------------------
 
 
-def mock_verify(payment: PaymentPayload, requirements: PaymentRequirements) -> VerifyResponse:
-    """Accept the payment if it is well-formed and pays exactly what we asked, to us, in our token.
+def check_terms(payment: PaymentPayload, requirements: PaymentRequirements) -> VerifyResponse:
+    """Our OWN check, run before any money moves (mock mode AND real facilitator mode).
 
+    Is the payment well-formed, and does it pay exactly what we asked, to us, in our token?
     This does NOT check the cryptographic signature -- only a real facilitator can.
     """
     accepted = payment.accepted
@@ -168,9 +169,19 @@ def mock_verify(payment: PaymentPayload, requirements: PaymentRequirements) -> V
         auth = Authorization.model_validate(payment.payload.get("authorization"))
     except Exception:
         return VerifyResponse(isValid=False, invalidReason="malformed_authorization")
-    # The signed authorization itself must also move the right money to the right place.
-    if auth.value != requirements.amount or auth.to.lower() != requirements.payTo.lower():
+
+    # The SIGNED authorization is what actually moves money on-chain, so it must match too.
+    # (A cheater can copy our bill into "accepted" and still sign for less, or to someone else.)
+    try:
+        signed_value = int(auth.value)
+    except ValueError:
         return VerifyResponse(isValid=False, invalidReason="authorization_mismatch")
+    if signed_value < int(requirements.amount):
+        return VerifyResponse(isValid=False, invalidReason="amount_too_low")
+    if signed_value != int(requirements.amount):
+        return VerifyResponse(isValid=False, invalidReason="authorization_mismatch")
+    if auth.to.lower() != requirements.payTo.lower():
+        return VerifyResponse(isValid=False, invalidReason="authorization_wrong_recipient")
 
     return VerifyResponse(isValid=True, payer=auth.from_)
 
@@ -206,9 +217,11 @@ def verify_and_settle(
     payment: PaymentPayload, requirements: PaymentRequirements, request_id: str = ""
 ) -> SettlementResponse:
     """Check the payment, then collect it. Raises PaymentRejected with a reason on any failure."""
-    if mock_facilitator_enabled():
-        verified = mock_verify(payment, requirements)
-    else:
+    # Step 1: our own terms check (same in both modes). A bad payment stops here,
+    # before we even bother the facilitator.
+    verified = check_terms(payment, requirements)
+    # Step 2 (real mode only): the facilitator checks the signature and the buyer's balance.
+    if verified.isValid and not mock_facilitator_enabled():
         verified = VerifyResponse.model_validate(call_facilitator("/verify", payment, requirements))
 
     if not verified.isValid:

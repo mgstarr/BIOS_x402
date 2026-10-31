@@ -1,81 +1,124 @@
-// Docs page: "Fetch a real 402" and "Pay it (mock)" buttons. Both make REAL HTTP calls
-// to our own /api/price, so they also show up on the /live dashboard.
+// "How it works" page: the three "Try it yourself" buttons.
+//   See a real bill -> the browser asks for Coin price of ETH without paying (a real 402)
+//   Make a payment  -> the server runs a full mock purchase (POST /try/simulate)
+//   Try to cheat    -> the server sends a tampered payment (POST /try/attack)
+// All of them go through the real paywall, so they also appear on Live payments.
+// Results are shown in plain words; the JSON is inside a closed "Show technical details".
 
 (function () {
-  const DUMMY_PAYER = "0x000000000000000000000000000000000000dEaD"; // obviously fake, same as try_pay.py
-  const DUMMY_SIGNATURE = "0x" + "00".repeat(65);
   const $ = (id) => document.getElementById(id);
+  const out = $("t-result");
+  const buttons = [$("t-bill"), $("t-pay"), $("t-cheat")];
+  const PATH = "/api/price";
+  const SYMBOL = "ETH";
 
-  async function fetchBill() {
+  function busy(on) {
+    buttons.forEach((b) => {
+      if (on) { b.dataset.was = b.disabled ? "1" : ""; b.disabled = true; }
+      else b.disabled = b.dataset.was === "1";
+    });
+  }
+
+  function head(cls, text) {
+    return el("div", `result-head ${cls}`, text);
+  }
+
+  function compare(rows) {
+    const box = el("div", "compare");
+    rows.forEach(([k, v, bad]) => {
+      const cell = el("div");
+      cell.append(el("div", "k", k), el("div", bad ? "v bad" : "v", v));
+      box.appendChild(cell);
+    });
+    return box;
+  }
+
+  async function run(fn) {
+    busy(true);
+    out.replaceChildren(el("p", "muted", "Working…"));
+    try {
+      out.replaceChildren(...(await fn()));
+    } catch (err) {
+      out.replaceChildren(head("bad", "Something went wrong"), el("p", "muted", err.message));
+    } finally {
+      busy(false);
+    }
+  }
+
+  // 1) See a real bill
+  $("t-bill").addEventListener("click", () => run(async () => {
     const resp = await fetch(window.LIVE_URL, { cache: "no-store" });
     const b64 = resp.headers.get("PAYMENT-REQUIRED");
-    if (resp.status !== 402 || !b64) throw new Error(`expected 402 with a bill, got ${resp.status}`);
-    return { resp, b64, bill: b64ToJson(b64) };
-  }
-
-  // Same logic as shops/try_pay.py: accept the first option, copy amount/payTo exactly.
-  function buildPayment(bill) {
+    if (resp.status !== 402 || !b64) throw new Error(`Expected a bill, got HTTP ${resp.status}`);
+    const bill = b64ToJson(b64);
     const req = bill.accepts[0];
-    const now = Math.floor(Date.now() / 1000);
-    return {
-      x402Version: 2,
-      accepted: req,
-      payload: {
-        signature: DUMMY_SIGNATURE,
-        authorization: {
-          from: DUMMY_PAYER,
-          to: req.payTo,
-          value: req.amount,
-          validAfter: String(now - 60),
-          validBefore: String(now + req.maxTimeoutSeconds),
-          nonce: randomHex(32),
-        },
-      },
-    };
-  }
+    return [
+      head("info", `We got a bill: ${atomicCents(req.amount)} for ${productName(PATH)} of ${coinLabel(SYMBOL)}`),
+      el("p", null, `${SITE.brand} answered: "This costs ${atomicCents(req.amount)}. Pay it to our wallet ${shortHex(req.payTo)} within ${req.maxTimeoutSeconds} seconds." No data yet: first, pay.`),
+      compare([
+        ["Price", atomicCents(req.amount)],
+        ["Pay to", `${SITE.brand} wallet ${shortHex(req.payTo)}`],
+        ["Currency", "USDC (digital dollar)"],
+        ["Valid for", `${req.maxTimeoutSeconds} seconds`],
+      ]),
+      techDetails([
+        [`HTTP ${resp.status} · PAYMENT-REQUIRED header (raw base64)`, b64],
+        ["Decoded bill (PaymentRequired)", bill],
+      ]),
+    ];
+  }));
 
-  $("fetch-live").addEventListener("click", async (e) => {
-    e.currentTarget.disabled = true;
-    try {
-      const { resp, b64, bill } = await fetchBill();
-      $("bill-b64").textContent = b64;
-      $("bill-json").textContent = pretty(bill);
-      $("bill-status").textContent = `LIVE · HTTP ${resp.status} · ${new Date().toLocaleTimeString()}`;
-      $("fetch-note").textContent = "This came over HTTP from our own endpoint, just now.";
-    } catch (err) {
-      $("fetch-note").textContent = `Failed: ${err.message}`;
-    } finally {
-      e.currentTarget.disabled = false;
+  // 2) Make a payment (mock mode only)
+  $("t-pay").addEventListener("click", () => run(async () => {
+    const r = await postJson("/try/simulate", { path: PATH, symbol: SYMBOL });
+    const [billStep, payStep, paidStep] = r.steps;
+    const parts = [];
+    if (r.ok) {
+      parts.push(head("ok", `Paid ✓ ${atomicCents(r.bill.amount)}: here's what the AI got`));
+      parts.push(dataCard(PATH, SYMBOL, paidStep.body));
+      parts.push(el("p", "muted", `Receipt number ${shortHex(paidStep.receipt && paidStep.receipt.transaction)}. In mock mode it starts with "0xmock", so it's clearly not a real transaction.`));
+    } else {
+      parts.push(head("bad", `Refused ✗: ${reasonText(paidStep && paidStep.body && paidStep.body.error, "sentence")}`));
     }
-  });
+    parts.push(techDetails([
+      ["The bill (PAYMENT-REQUIRED, decoded)", billStep.body],
+      ["The payment (PAYMENT-SIGNATURE, decoded)", payStep && payStep.payload],
+      ["The receipt (PAYMENT-RESPONSE, decoded)", paidStep && paidStep.receipt],
+      ["The data (response body)", paidStep && paidStep.body],
+    ]));
+    return parts;
+  }));
 
-  const payBtn = $("pay-mock");
-  payBtn.addEventListener("click", async () => {
-    payBtn.disabled = true;
-    try {
-      const { bill } = await fetchBill();
-      const payment = buildPayment(bill);
-      $("payment-json").textContent = pretty(payment);
-
-      const resp = await fetch(window.LIVE_URL, {
-        cache: "no-store",
-        headers: { "PAYMENT-SIGNATURE": jsonToB64(payment) },
-      });
-      const body = await resp.json();
-      const receipt = resp.headers.get("PAYMENT-RESPONSE");
-      if (resp.status === 200 && receipt) {
-        $("receipt-json").textContent = pretty(b64ToJson(receipt));
-        $("receipt-status").textContent = `LIVE · HTTP 200 · ${new Date().toLocaleTimeString()}`;
-        $("data-json").textContent = pretty(body);
-        $("data-block").hidden = false;
-        $("pay-note").textContent = "Paid. Check the Live page: earnings just went up.";
-      } else {
-        $("pay-note").textContent = `Rejected (HTTP ${resp.status}): ${body.error}`;
-      }
-    } catch (err) {
-      $("pay-note").textContent = `Failed: ${err.message}`;
-    } finally {
-      payBtn.disabled = false;
+  // 3) Try to cheat
+  $("t-cheat").addEventListener("click", () => run(async () => {
+    const kind = document.querySelector('input[name="cheat"]:checked').value;
+    const r = await postJson("/try/attack", { kind, path: PATH, symbol: SYMBOL });
+    const [billStep, payStep, paidStep] = r.steps;
+    const auth = payStep ? payStep.payload.payload.authorization : {};
+    const bill = r.bill || {};
+    const parts = [];
+    if (r.rejected) {
+      parts.push(head("bad", `Refused ✗: ${reasonText(r.error, "sentence")}. No data given.`));
+    } else {
+      parts.push(head("info", "Not refused. This should never happen: please tell the team."));
     }
-  });
+    if (kind === "underpay") {
+      parts.push(compare([
+        ["The bill asked for", atomicCents(bill.amount)],
+        ["The cheater signed for", atomicCents(auth.value), true],
+      ]));
+    } else {
+      parts.push(compare([
+        ["The bill said pay to", `${SITE.brand} ${shortHex(bill.payTo)}`],
+        ["The cheater signed to", `someone else ${shortHex(auth.to)}`, true],
+      ]));
+    }
+    parts.push(el("p", "muted", "This attempt now shows as \"Refused ✗\" on Live payments."));
+    parts.push(techDetails([
+      ["The bill (PAYMENT-REQUIRED, decoded)", billStep && billStep.body],
+      ["The tampered payment (PAYMENT-SIGNATURE, decoded)", payStep && payStep.payload],
+      [`Our answer: HTTP ${r.status}`, paidStep && paidStep.body],
+    ]));
+    return parts;
+  }));
 })();
