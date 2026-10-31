@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}Live payments{% endblock %}
+{% block content %}
+<div class="live-head">
+  <h1>Live payments</h1>
+  <span class="pulse" id="pulse"><i></i><span id="pulse-text">connecting…</span></span>
+</div>
+
+<div class="warn-banner" id="payto-warning" {{ '' if pay_to_problem else 'hidden' }}>
+  ⚠ Setup needed: the shop's own wallet address isn't set yet, so bills point to a placeholder wallet.
+  <details class="tech">
+    <summary>Show technical details</summary>
+    <div class="tech-body">
+      <p>Set <code>SHOP_PAY_TO</code> in <code>.env</code> to the shop's wallet address (0x + 40 hex characters), then restart the shop.</p>
+      <p id="payto-detail">{% if pay_to_problem == 'invalid' %}The current value is not a valid address.{% else %}It is empty, so bills currently pay <code>{{ pay_to }}</code>.{% endif %}</p>
+    </div>
+  </details>
+</div>
+
+<div class="card earnings">
+  <div class="label">Total earned</div>
+  <div class="value" id="earned">$0.00</div>
+  <div class="sub">money collected from AI agents, in USDC (digital dollars, 1 USDC = $1){{ ' · simulated in mock mode' if mock_mode }}</div>
+</div>
+
+<div class="grid grid-4">
+  <div class="card stat"><div class="label">Requests</div><div class="value" id="c-requests">0</div><div class="hint">times an AI asked for data</div></div>
+  <div class="card stat"><div class="label">Bills sent</div><div class="value" id="c-402">0</div><div class="hint">"this costs 1¢" answers</div></div>
+  <div class="card stat"><div class="label">Payments collected</div><div class="value ok" id="c-settled">0</div><div class="hint">paid in full, data delivered</div></div>
+  <div class="card stat"><div class="label">Payments refused</div><div class="value bad" id="c-failed">0</div><div class="hint">wrong or cheating payments</div></div>
+</div>
+
+<div class="card feed">
+  <div class="feed-head">
+    <h2>Every purchase, as it happens</h2>
+    <label class="toggle"><input type="checkbox" id="show-unpaid"> Show unpaid bills</label>
+  </div>
+  <div class="legend" aria-label="What the statuses mean">
+    <div><span class="pill pill-sm pill-wait">⏳ Waiting for payment</span> bill sent, payment not in yet</div>
+    <div><span class="pill pill-sm pill-paid">✓ Paid</span> money collected, data delivered</div>
+    <div><span class="pill pill-sm pill-refused">✗ Refused</span> payment was wrong, no data given</div>
+    <div><span class="pill pill-sm pill-expired">⌛ Bill expired</span> nobody paid within 60 seconds</div>
+  </div>
+  <div class="feed-scroll">
+    <table>
+      <thead>
+        <tr>
+          <th>Status</th><th>Time</th><th>What was bought</th><th class="num">Amount</th>
+          <th class="hide-sm">Buyer</th><th class="hide-sm">Receipt</th>
+        </tr>
+      </thead>
+      <tbody id="feed-body">
+        <tr><td colspan="6" class="empty">Nothing yet. Go to Home and press "Watch an AI buy this".</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="feed-foot">
+    <p class="coins-note">Bitcoin, Ether and Solana are popular cryptocurrencies. Our data is sample data for the demo. Buyer and receipt are shortened wallet and transaction numbers.</p>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/live.js') }}"></script>
+{% endblock %}

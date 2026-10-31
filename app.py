@@ -2,14 +2,23 @@
 
 import sys
 
+from dotenv import load_dotenv
+
 
 def main() -> None:
     if len(sys.argv) < 2:
         print("usage: python app.py <service>")
         sys.exit(1)
 
+    load_dotenv()  # read .env into environment variables before any service starts
+
     service = sys.argv[1]
-    print(f"TODO: start service '{service}'")
+    if service == "shop":
+        from shops.server import run
+
+        run()
+    else:
+        print(f"TODO: start service '{service}'")
 
 
 if __name__ == "__main__":
