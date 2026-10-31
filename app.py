@@ -17,6 +17,10 @@ def main() -> None:
         from shops.server import run
 
         run()
+    elif service == "evil":
+        from shops.malicious import run
+
+        run()
     else:
         print(f"TODO: start service '{service}'")
 
