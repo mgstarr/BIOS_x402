@@ -17,6 +17,10 @@ class Event(BaseModel):
         "settled",
         "failed",
         "answer",
+	"allowed",
+        "blocked",
+        "attack",
+        "result",
     ]
     data: dict = Field(default_factory=dict)
 
