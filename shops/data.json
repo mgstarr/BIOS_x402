@@ -1,0 +1,36 @@
+{
+  "_note": "Static sample data for demos. Not live prices.",
+  "as_of": "2026-11-01T00:00:00Z",
+  "prices": {
+    "ETH": {
+      "symbol": "ETH",
+      "name": "Ethereum",
+      "price_usd": 3412.57,
+      "change_24h_pct": 1.84,
+      "high_24h_usd": 3455.10,
+      "low_24h_usd": 3329.42,
+      "volume_24h_usd": 18734520000,
+      "market_cap_usd": 411820000000
+    },
+    "BTC": {
+      "symbol": "BTC",
+      "name": "Bitcoin",
+      "price_usd": 97215.33,
+      "change_24h_pct": -0.62,
+      "high_24h_usd": 98410.00,
+      "low_24h_usd": 96580.15,
+      "volume_24h_usd": 42118900000,
+      "market_cap_usd": 1923400000000
+    },
+    "SOL": {
+      "symbol": "SOL",
+      "name": "Solana",
+      "price_usd": 187.46,
+      "change_24h_pct": 3.27,
+      "high_24h_usd": 190.12,
+      "low_24h_usd": 180.03,
+      "volume_24h_usd": 4208750000,
+      "market_cap_usd": 88910000000
+    }
+  }
+}
