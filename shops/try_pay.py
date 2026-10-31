@@ -1,11 +1,20 @@
-"""Call the paid price endpoint and print the 402 bill in plain English.
+"""Walk through a full x402 payment against every paid endpoint of the shop.
+
+For each endpoint:  1) GET it, expect 402 + the bill
+                    2) build a FAKE but well-formed PaymentPayload (dummy signature)
+                    3) retry with PAYMENT-SIGNATURE, print status, receipt and data
+
+The fake payment only works when the shop runs with MOCK_FACILITATOR=true.
+A real facilitator would reject the dummy signature (which is correct!).
 
 Run from the repo root (with the shop running):  python shops\\try_pay.py
 """
 
 import json
 import os
+import secrets
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # so `contracts` imports work
@@ -13,42 +22,91 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # so `contracts
 import requests
 from dotenv import load_dotenv
 
-from contracts.payment import PaymentRequired, decode_header
-from shops.honest import HEADER_PAYMENT_REQUIRED, USDC_DECIMALS
+from contracts.payment import (
+    Authorization,
+    PaymentPayload,
+    PaymentRequired,
+    SettlementResponse,
+    decode_header,
+    encode_header,
+)
+from shops.honest import (
+    HEADER_PAYMENT_REQUIRED,
+    HEADER_PAYMENT_RESPONSE,
+    HEADER_PAYMENT_SIGNATURE,
+    USDC_DECIMALS,
+)
+
+ENDPOINTS = ["/api/price", "/api/sentiment", "/api/report"]
+# Obviously-fake buyer wallet and signature (65 zero bytes). Never a real key.
+DUMMY_PAYER = "0x000000000000000000000000000000000000dEaD"
+DUMMY_SIGNATURE = "0x" + "00" * 65
 
 
-def main() -> None:
-    load_dotenv()
-    url = os.getenv("SHOP_URL", "http://localhost:5001") + "/api/price?symbol=ETH"
+def build_fake_payment(bill: PaymentRequired) -> PaymentPayload:
+    """Agree to the shop's first option, copying its amount, payTo and asset exactly."""
+    req = bill.accepts[0]
+    now = int(time.time())
+    auth = Authorization(
+        from_=DUMMY_PAYER,
+        to=req.payTo,
+        value=req.amount,
+        validAfter=str(now - 60),
+        validBefore=str(now + req.maxTimeoutSeconds),
+        nonce="0x" + secrets.token_hex(32),
+    )
+    return PaymentPayload(
+        accepted=req,
+        payload={"signature": DUMMY_SIGNATURE, "authorization": auth.model_dump(by_alias=True)},
+    )
 
-    print(f"GET {url}")
+
+def try_endpoint(url: str) -> None:
+    print("=" * 70)
+    print(f"Step 1: GET {url}")
     resp = requests.get(url, timeout=10)
-    print(f"Status: {resp.status_code}")
-
+    print(f"  Status: {resp.status_code}")
     if resp.status_code != 402:
         print(json.dumps(resp.json(), indent=2))
         return
 
     header = resp.headers.get(HEADER_PAYMENT_REQUIRED)
     if not header:
-        print(f"402 but no {HEADER_PAYMENT_REQUIRED} header!")
+        print(f"  402 but no {HEADER_PAYMENT_REQUIRED} header!")
+        return
+    bill = decode_header(header, PaymentRequired)
+    req = bill.accepts[0]
+    usd = int(req.amount) / 10**USDC_DECIMALS
+    print(f"  Bill: {req.amount} atomic = ${usd:.2f} USDC to {req.payTo}")
+    print(f"        token {req.asset} on {req.network}")
+
+    print("\nStep 2: build fake (dummy-signed) payment and retry")
+    payment = build_fake_payment(bill)
+    resp = requests.get(url, headers={HEADER_PAYMENT_SIGNATURE: encode_header(payment)}, timeout=30)
+    print(f"  Status: {resp.status_code}")
+
+    if resp.status_code != 200:
+        print(f"  Rejected: {resp.json().get('error')}")
         return
 
-    bill = decode_header(header, PaymentRequired)
-    print(f"\nThe shop wants payment (x402 v{bill.x402Version}, error={bill.error!r}):")
-    for i, req in enumerate(bill.accepts, 1):
-        usd = int(req.amount) / 10**USDC_DECIMALS
-        print(f"\n  Option {i}:")
-        print(f"    Price:        {req.amount} atomic units = ${usd:.6f} {req.extra.get('name', '')}")
-        print(f"    Pay to:       {req.payTo}")
-        print(f"    Token:        {req.asset}")
-        print(f"    Network:      {req.network}  (scheme: {req.scheme})")
-        print(f"    For:          {req.resource}")
-        print(f"    Description:  {req.description}")
-        print(f"    Valid for:    {req.maxTimeoutSeconds} seconds")
+    receipt_header = resp.headers.get(HEADER_PAYMENT_RESPONSE)
+    if receipt_header:
+        receipt = decode_header(receipt_header, SettlementResponse)
+        print("\n  Receipt (PAYMENT-RESPONSE, decoded):")
+        print("   ", json.dumps(receipt.model_dump(), indent=2).replace("\n", "\n    "))
+    else:
+        print(f"  WARNING: 200 but no {HEADER_PAYMENT_RESPONSE} header")
 
-    same = resp.json() == bill.model_dump(by_alias=True)
-    print(f"\nHeader matches JSON body: {same}")
+    print("\n  Data:")
+    print("   ", json.dumps(resp.json(), indent=2).replace("\n", "\n    "))
+
+
+def main() -> None:
+    load_dotenv()
+    base = os.getenv("SHOP_URL", "http://localhost:5001").rstrip("/")
+    for path in ENDPOINTS:
+        try_endpoint(f"{base}{path}?symbol=ETH")
+        print()
 
 
 if __name__ == "__main__":

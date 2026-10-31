@@ -1,4 +1,4 @@
-"""Shop Flask server: a market data API whose price endpoint is x402-gated."""
+"""Shop Flask server: a market data API whose /api/* endpoints are x402-gated."""
 
 import json
 from functools import wraps
@@ -40,12 +40,57 @@ def known_symbol(view):
     return wrapper
 
 
+# One place for every paid product: the @paid decorators and GET /catalog both read this,
+# so the advertised price can never drift from the price we actually charge.
+PRODUCTS = {
+    "/api/price": (0.01, "Market price snapshot for one symbol"),
+    "/api/sentiment": (0.02, "Social sentiment score and topics for one symbol (24h)"),
+    "/api/report": (0.05, "Analyst-style report: summary, key levels, metrics, risks"),
+}
+
+
+@app.get("/catalog")
+def catalog():
+    """Free menu of what we sell, so a buyer can see prices before paying."""
+    base = request.host_url.rstrip("/")
+    return jsonify([
+        {
+            "path": path,
+            "description": description,
+            "price_usd": price_usd,
+            "example_url": f"{base}{path}?symbol=ETH",
+        }
+        for path, (price_usd, description) in PRODUCTS.items()
+    ])
+
+
+def paid_product(path: str):
+    price_usd, description = PRODUCTS[path]
+    return paid(price_usd, description=description)
+
+
 @app.get("/api/price")
 @known_symbol
-@paid(0.01, description="Market price snapshot for one symbol")
+@paid_product("/api/price")
 def price():
     symbol = request.args["symbol"].upper()
     return jsonify({**MARKET_DATA["prices"][symbol], "as_of": MARKET_DATA["as_of"]})
+
+
+@app.get("/api/sentiment")
+@known_symbol
+@paid_product("/api/sentiment")
+def sentiment():
+    symbol = request.args["symbol"].upper()
+    return jsonify({**MARKET_DATA["sentiment"][symbol], "as_of": MARKET_DATA["as_of"]})
+
+
+@app.get("/api/report")
+@known_symbol
+@paid_product("/api/report")
+def report():
+    symbol = request.args["symbol"].upper()
+    return jsonify({**MARKET_DATA["reports"][symbol], "as_of": MARKET_DATA["as_of"]})
 
 
 def run() -> None:
