@@ -9,13 +9,20 @@ How it works (x402 v2, "exact" scheme):
         the money (mock receipt, or the facilitator's /settle).
   3. Success: 200 + the data + PAYMENT-RESPONSE header (base64 SettlementResponse).
      Failure: 402 again, with the reason in "error".
+
+Request ids: every bill carries a short id in accepts[0].extra.requestId. The buyer copies
+the bill into its payment, so the retry brings the same id back. Every event we log
+(payment_required / verified / settled / failed) has that request_id, which lets the Live
+page show ONE row per purchase instead of one row per event.
 """
 
 import os
+import re
 import secrets
 from functools import wraps
 
 import requests
+from dotenv import load_dotenv
 from flask import jsonify, make_response, request
 
 from contracts.events import Event, EventLog
@@ -43,6 +50,12 @@ USDC_DECIMALS = 6  # 1 USDC = 1_000_000 atomic units
 # Placeholder receiver used only when SHOP_PAY_TO is empty in .env.
 PLACEHOLDER_PAY_TO = "0x0000000000000000000000000000000000000001"
 FACILITATOR_TIMEOUT_SECONDS = 15
+ADDRESS_RE = re.compile(r"^0x[0-9a-fA-F]{40}$")
+REQUEST_ID_RE = re.compile(r"^[0-9a-f]{16}$")
+
+# Read .env no matter how the shop was started (python app.py shop, flask run, tests...).
+# Values already set in the real environment win over .env.
+load_dotenv()
 
 # In-memory log of what the shop did, exposed at GET /events.
 events = EventLog()
@@ -69,6 +82,30 @@ def mock_facilitator_enabled() -> bool:
     return os.getenv("MOCK_FACILITATOR", "false").strip().lower() == "true"
 
 
+def configured_pay_to() -> str:
+    """SHOP_PAY_TO from .env, or "" if it is not set. The ONE place that reads it."""
+    return (os.getenv("SHOP_PAY_TO") or "").strip()
+
+
+def pay_to_address() -> str:
+    """The wallet we actually put on bills: SHOP_PAY_TO, or the placeholder if it's empty."""
+    return configured_pay_to() or PLACEHOLDER_PAY_TO
+
+
+def pay_to_problem() -> str | None:
+    """"empty" or "invalid" if SHOP_PAY_TO needs fixing, else None."""
+    value = configured_pay_to()
+    if not value:
+        return "empty"
+    if not ADDRESS_RE.match(value):
+        return "invalid"
+    return None
+
+
+def new_request_id() -> str:
+    return secrets.token_hex(8)  # 16 hex chars, e.g. "9f2c41d07ab35e10"
+
+
 def build_requirements(
     price_usd: float,
     amount: str | None = None,
@@ -76,18 +113,22 @@ def build_requirements(
     asset: str | None = None,
     max_timeout_seconds: int | None = None,
     description: str = "",
+    request_id: str | None = None,
 ) -> PaymentRequirements:
     """Build the bill for the current request. Any argument given overrides the honest default."""
+    extra = {"name": "USDC", "version": "2"}
+    if request_id:
+        extra["requestId"] = request_id  # lets us match the paid retry to this bill
     return PaymentRequirements(
         scheme="exact",
         network=NETWORK,
         amount=amount if amount is not None else usd_to_atomic(price_usd),
         asset=asset if asset is not None else os.getenv("USDC_ADDRESS", ""),
-        payTo=pay_to if pay_to is not None else (os.getenv("SHOP_PAY_TO") or PLACEHOLDER_PAY_TO),
+        payTo=pay_to if pay_to is not None else pay_to_address(),
         maxTimeoutSeconds=max_timeout_seconds if max_timeout_seconds is not None else 60,
         resource=request.url,
         description=description,
-        extra={"name": "USDC", "version": "2"},
+        extra=extra,
     )
 
 
@@ -161,7 +202,9 @@ def call_facilitator(endpoint: str, payment: PaymentPayload, requirements: Payme
         raise PaymentRejected(f"facilitator_error: {endpoint} failed ({type(exc).__name__})") from exc
 
 
-def verify_and_settle(payment: PaymentPayload, requirements: PaymentRequirements) -> SettlementResponse:
+def verify_and_settle(
+    payment: PaymentPayload, requirements: PaymentRequirements, request_id: str = ""
+) -> SettlementResponse:
     """Check the payment, then collect it. Raises PaymentRejected with a reason on any failure."""
     if mock_facilitator_enabled():
         verified = mock_verify(payment, requirements)
@@ -171,8 +214,8 @@ def verify_and_settle(payment: PaymentPayload, requirements: PaymentRequirements
     if not verified.isValid:
         raise PaymentRejected(verified.invalidReason or "invalid_payment")
 
-    record("verified", path=request.path, amount_usd=atomic_to_usd(requirements.amount),
-           payer=verified.payer)
+    record("verified", path=request.path, resource=request.url, request_id=request_id,
+           amount_usd=atomic_to_usd(requirements.amount), payer=verified.payer)
 
     if mock_facilitator_enabled():
         settlement = mock_settle(verified)
@@ -184,6 +227,29 @@ def verify_and_settle(payment: PaymentPayload, requirements: PaymentRequirements
     if settlement.payer is None:
         settlement.payer = verified.payer
     return settlement
+
+
+def echoed_request_id(payment: PaymentPayload | None) -> str | None:
+    """The requestId the buyer copied from our bill into its payment (if well-formed)."""
+    if payment is None:
+        return None
+    rid = (payment.accepted.extra or {}).get("requestId")
+    return rid if isinstance(rid, str) and REQUEST_ID_RE.match(rid) else None
+
+
+def open_bill_id(path: str, resource: str) -> str | None:
+    """Fallback for buyers that drop extra.requestId: the newest bill for the same
+    path + URL that has not been paid or failed yet."""
+    closed = set()
+    for e in reversed(events.last(500)):
+        d = e.data
+        if d.get("path") != path or d.get("resource") != resource or not d.get("request_id"):
+            continue
+        if e.type in ("settled", "failed"):
+            closed.add(d["request_id"])
+        elif e.type == "payment_required" and d["request_id"] not in closed:
+            return d["request_id"]
+    return None
 
 
 def paid(
@@ -204,34 +270,52 @@ def paid(
     def decorator(view):
         @wraps(view)
         def wrapper(*args, **kwargs):
-            path = request.path
-            record("request", method=request.method, path=path, url=request.url, price_usd=price_usd)
+            path, resource = request.path, request.url
+            signature_header = request.headers.get(HEADER_PAYMENT_SIGNATURE)
 
+            payment = None
+            if signature_header:
+                try:
+                    payment = decode_header(signature_header, PaymentPayload)
+                except Exception:
+                    payment = None  # rejected below as malformed
+
+            # Which purchase is this? No payment -> new bill, new id.
+            # Paid retry -> the id the buyer copied from our bill (or the open bill for this URL).
+            if not signature_header:
+                bill_rid = rid = new_request_id()
+            else:
+                bill_rid = echoed_request_id(payment)
+                rid = bill_rid or open_bill_id(path, resource) or new_request_id()
+
+            record("request", method=request.method, path=path, url=resource,
+                   resource=resource, request_id=rid, price_usd=price_usd)
+
+            # On a retry, rebuild the SAME bill (same requestId) so it matches what was accepted.
             requirements = build_requirements(
-                price_usd, amount, pay_to, asset, max_timeout_seconds, description
+                price_usd, amount, pay_to, asset, max_timeout_seconds, description,
+                request_id=bill_rid,
             )
             amount_usd = atomic_to_usd(requirements.amount)
 
-            signature_header = request.headers.get(HEADER_PAYMENT_SIGNATURE)
             if not signature_header:
-                record("payment_required", path=path, amount_usd=amount_usd,
-                       requirements=requirements.model_dump())
+                record("payment_required", path=path, resource=resource, request_id=rid,
+                       amount_usd=amount_usd, requirements=requirements.model_dump())
                 return payment_required_response(requirements)
 
             payer = None
             try:
-                try:
-                    payment = decode_header(signature_header, PaymentPayload)
-                except Exception:
+                if payment is None:
                     raise PaymentRejected("malformed_payment_signature")
                 payer = (payment.payload.get("authorization") or {}).get("from")
-                settlement = verify_and_settle(payment, requirements)
+                settlement = verify_and_settle(payment, requirements, request_id=rid)
             except PaymentRejected as exc:
-                record("failed", path=path, amount_usd=amount_usd, payer=payer, reason=str(exc))
+                record("failed", path=path, resource=resource, request_id=rid,
+                       amount_usd=amount_usd, payer=payer, reason=str(exc))
                 return payment_required_response(requirements, error=str(exc))
 
-            record("settled", path=path, amount_usd=amount_usd, payer=settlement.payer,
-                   tx=settlement.transaction)
+            record("settled", path=path, resource=resource, request_id=rid,
+                   amount_usd=amount_usd, payer=settlement.payer, tx=settlement.transaction)
 
             # Paid in full: now (and only now) run the real route and hand over the data.
             response = make_response(view(*args, **kwargs))

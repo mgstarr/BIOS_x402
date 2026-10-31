@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% block title %}Home{% endblock %}
+{% block content %}
+
+<section class="hero">
+  <div class="eyebrow">Pay-per-call API · x402</div>
+  <h1>{{ brand }}<span class="accent">Market data for AI agents.</span></h1>
+  <p class="pitch">Pay per call in USDC. <strong>No API keys, no accounts.</strong></p>
+  <div class="btn-row">
+    <a class="btn btn-primary" href="#try">Try it now</a>
+    <a class="btn" href="{{ url_for('docs') }}">Read the docs</a>
+    <a class="btn" href="{{ url_for('live') }}">Watch it live →</a>
+  </div>
+</section>
+
+<section>
+  <div class="eyebrow">How it works</div>
+  <h2>Three steps. One HTTP request, retried once.</h2>
+  <div class="grid grid-3 steps" style="margin-top:1.5rem">
+    <div class="card step">
+      <div class="step-num">1</div>
+      <h3>Agent asks → gets a 402 bill</h3>
+      <p>The agent calls <code>/api/price?symbol=ETH</code>. We answer <code>402 Payment Required</code> with the price, token and our wallet in the <code>PAYMENT-REQUIRED</code> header.</p>
+    </div>
+    <div class="card step">
+      <div class="step-num">2</div>
+      <h3>Agent pays with a signature</h3>
+      <p>The agent's wallet signs a USDC transfer for exactly that amount and retries the same request with a <code>PAYMENT-SIGNATURE</code> header. No gas, no sign-up.</p>
+    </div>
+    <div class="card step">
+      <div class="step-num">3</div>
+      <h3>Agent gets the data</h3>
+      <p>We verify and settle the payment, then return <code>200</code> with the data plus a <code>PAYMENT-RESPONSE</code> receipt holding the transaction hash.</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="eyebrow">Pricing</div>
+  <h2>Pay only for what you call.</h2>
+  <p class="muted">Loaded from <a href="{{ url_for('catalog') }}"><code>/catalog</code></a>, the same table the paywall charges from.</p>
+  <div class="grid grid-3" style="margin-top:1.25rem">
+    {% for prod in products %}
+    <div class="card price-card">
+      <div class="path">{{ prod.path }}</div>
+      <div class="price">${{ '%.2f' % prod.price_usd }}</div>
+      <div class="per">USDC per call</div>
+      <div class="desc">{{ prod.description }}</div>
+      <div class="atomic">amount = {{ (prod.price_usd * 1000000) | round | int }} atomic units</div>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+
+<section id="try">
+  <div class="eyebrow">Try it</div>
+  <h2>Call it yourself. Expect a bill.</h2>
+  <p class="muted">Paste this into PowerShell (use <code>curl.exe</code>, not <code>curl</code>), or press <strong>Run</strong> to send the real request from this page.</p>
+  <div class="card terminal">
+    <div class="terminal-bar">
+      <span class="dots"><i></i><i></i><i></i></span>
+      <span class="title">PowerShell</span>
+      <select id="try-path" aria-label="Endpoint">
+        {% for prod in products %}<option value="{{ prod.path }}">{{ prod.path }}</option>{% endfor %}
+      </select>
+      <select id="try-symbol" aria-label="Symbol">
+        {% for s in symbols %}<option {{ 'selected' if s == 'ETH' }}>{{ s }}</option>{% endfor %}
+      </select>
+      <button class="btn btn-primary" id="try-run">Run ▸</button>
+      {% if mock_mode %}<button class="btn" id="try-simulate" title="Runs 402 → dummy-signed payment → 200 on the server. Only in MOCK_FACILITATOR mode.">Simulate paid call (mock)</button>{% endif %}
+    </div>
+    <pre><span class="prompt">PS&gt; </span><span id="try-cmd"></span>
+
+<span id="try-out" class="c"># Press Run to see the real response from {{ base_url }}</span></pre>
+  </div>
+</section>
+
+{% endblock %}
+{% block scripts %}
+<script>window.BASE_URL = {{ base_url | tojson }};</script>
+<script src="{{ url_for('static', filename='js/common.js') }}"></script>
+<script src="{{ url_for('static', filename='js/try.js') }}"></script>
+{% endblock %}

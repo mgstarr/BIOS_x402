@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Live{% endblock %}
+{% block content %}
+<div class="live-head">
+  <h1>Live sales</h1>
+  <span class="badge badge-mock" id="mock-badge" {{ '' if mock_mode else 'hidden' }}>Mock mode</span>
+  <span class="pulse" id="pulse"><i></i><span id="pulse-text">connecting…</span></span>
+</div>
+
+<div class="warn-banner" id="payto-warning" {{ '' if pay_to_problem else 'hidden' }}>
+  ⚠ Set SHOP_PAY_TO in <code>.env</code> to your shop's wallet address (0x + 40 hex characters), then restart the shop.
+  <div class="muted" id="payto-detail">{% if pay_to_problem == 'invalid' %}The current value is not a valid address.{% else %}It is empty, so bills currently pay a placeholder address <code>{{ pay_to }}</code>.{% endif %}</div>
+</div>
+
+<div class="card earnings">
+  <div class="label">Total earned</div>
+  <div class="value" id="earned">$0.00</div>
+  <div class="sub">sum of settled payments, in USDC</div>
+</div>
+
+<div class="grid grid-4">
+  <div class="card stat"><div class="label">Requests</div><div class="value" id="c-requests">0</div></div>
+  <div class="card stat"><div class="label">402 bills sent</div><div class="value" id="c-402">0</div></div>
+  <div class="card stat"><div class="label">Payments settled</div><div class="value accent" id="c-settled">0</div></div>
+  <div class="card stat"><div class="label">Failed</div><div class="value" id="c-failed">0</div></div>
+</div>
+
+<div class="card feed">
+  <div class="feed-head"><h2>Live feed</h2><span class="muted">one row per purchase · 402 BILL → VERIFIED → PAID / FAILED · refreshes every second</span></div>
+  <div class="feed-scroll">
+    <table>
+      <thead>
+        <tr>
+          <th>Time</th><th>Endpoint</th><th class="num">Amount</th>
+          <th class="hide-sm">Payer</th><th class="hide-sm">Tx</th><th>Status</th>
+        </tr>
+      </thead>
+      <tbody id="feed-body">
+        <tr><td colspan="6" class="empty">Waiting for the first request… try <code>python shops\try_pay.py</code></td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/common.js') }}"></script>
+<script src="{{ url_for('static', filename='js/live.js') }}"></script>
+{% endblock %}

@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}{{ brand }}{% endblock %} · {{ brand }}</title>
+  <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/site.css') }}">
+</head>
+<body>
+  <nav class="nav">
+    <div class="wrap">
+      <a class="logo" href="{{ url_for('home') }}"><span class="logo-mark">402</span>{{ brand }}</a>
+      {% if mock_mode %}<span class="badge badge-mock" title="MOCK_FACILITATOR=true: payments are checked for shape only, no real money moves">Mock mode</span>{% endif %}
+      <div class="nav-links">
+        {% set p = request.path %}
+        <a href="{{ url_for('home') }}" class="{{ 'active' if p == '/' }}">Home</a>
+        <a href="{{ url_for('docs') }}" class="{{ 'active' if p == '/docs' }}">Docs</a>
+        <a href="{{ url_for('live') }}" class="{{ 'active' if p == '/live' }}">Live</a>
+      </div>
+    </div>
+  </nav>
+
+  <main>
+    <div class="wrap">
+      {% block content %}{% endblock %}
+    </div>
+  </main>
+
+  <footer>
+    <div class="wrap">{{ brand }} · market data for AI agents · x402 v2 on Base Sepolia (testnet) · demo data, not financial advice</div>
+  </footer>
+  {% block scripts %}{% endblock %}
+</body>
+</html>
