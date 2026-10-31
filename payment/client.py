@@ -40,12 +40,13 @@ def pick_option(bill):
 
 def mock_sign(req):
     """MOCK_SIGNER mode: build a dummy PaymentPayload in the exact contract format (zero signature)."""
+    now = int(time.time())
     auth = Authorization(
         from_=MOCK_PAYER,
         to=req.payTo,
         value=req.amount,
-        validAfter="0",
-        validBefore=str(int(time.time()) + req.maxTimeoutSeconds),
+        validAfter=str(now - 600),  # valid from 10 min ago, to allow for clock differences
+        validBefore=str(now + req.maxTimeoutSeconds),
         nonce="0x" + os.urandom(32).hex(),
     )
     payload = {"signature": "0x" + "00" * 65, "authorization": auth.model_dump(by_alias=True)}

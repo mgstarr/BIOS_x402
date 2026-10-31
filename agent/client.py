@@ -50,7 +50,7 @@ def call_paid_api(url):
         return {"error": str(e), "steps": recorder.steps}
     summary = None
     if payment:
-        simulated = MOCK_SIGNER or str(payment["tx"]).startswith("MOCK")
+        simulated = MOCK_SIGNER or "mock" in str(payment["tx"]).lower()  # e.g. "0xmock…" receipts
         summary = {"amount_usd": payment["amount_usd"], "tx": payment["tx"], "simulated": simulated}
         recorder.steps[-1]["simulated"] = simulated  # the "paid" step
     return {"data": data, "payment": summary, "steps": recorder.steps}
@@ -74,7 +74,10 @@ TOOLS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "url": {"type": "string", "description": "A path from the catalog, e.g. /api/price?symbol=ETH"}
+                    "url": {
+                        "type": "string",
+                        "description": "A catalog path plus ?symbol=BTC, ETH or SOL, e.g. /api/price?symbol=ETH",
+                    }
                 },
                 "required": ["url"],
             },
