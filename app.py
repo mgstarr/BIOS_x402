@@ -1,4 +1,4 @@
-"""Entry point: `python app.py <service>` starts the named service: shop, evil, dashboard, agent, attacker."""
+"""Entry point: `python app.py <service>` starts the named service: shop, evil, dashboard, agent, attacker, defender."""
 
 import sys
 
@@ -34,6 +34,10 @@ def main() -> None:
         from attacker.server import app
 
         app.run(host="0.0.0.0", port=7004)
+    elif service == "defender":  # payment guard in front of the signer (port 7003)
+        from defender.server import run
+
+        run()
     else:
         print(f"TODO: start service '{service}'")
 
