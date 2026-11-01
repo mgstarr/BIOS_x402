@@ -30,6 +30,8 @@ def describe(s):
         return f"by {short(s['payer'])}"
     if kind == "paid":
         return f"tx {s['tx']}" + ("  [SIMULATED]" if s.get("simulated") else "  [ON-CHAIN]")
+    if kind == "blocked":
+        return f"GUARD said no ({s['check']}): {s['reason']}"
     if kind == "failed":
         return s["error"]
     if kind == "result":
@@ -51,6 +53,8 @@ if __name__ == "__main__":
     steps = [s for s in r["trace"] if s["step"] != "answer"]
     for i, s in enumerate(steps, 1):
         print(f"{i:>2}. {s['step']:<8} {describe(s)}")
-    total = sum(p["amount_usd"] for p in r["payments"])
+    paid = [p for p in r["payments"] if p["status"] == "paid"]
+    blocked = [p for p in r["payments"] if p["status"] == "blocked"]
     print(f"    ANSWER   {r['answer']}")
-    print(f"    TOTAL    ${total:.2f} in {len(r['payments'])} payments")
+    print(f"    TOTAL    ${sum(p['amount_usd'] for p in paid):.2f} paid in {len(paid)} payments, "
+          f"{len(blocked)} blocked (${sum(p['amount_usd'] for p in blocked):.2f} saved)")

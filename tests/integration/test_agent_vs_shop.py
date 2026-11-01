@@ -26,12 +26,12 @@ def main():
     catalog = requests.get(f"{SHOP_URL}/catalog", timeout=5).json()
     print("2. catalog ", [(c["path"], c["price_usd"]) for c in catalog])
 
-    log = EventLog()
+    log, paid, data = EventLog(), [], None
     try:
-        data, payment = fetch_paid(SHOP_URL + PATH, log)
+        data = fetch_paid(SHOP_URL + PATH, log, paid)
     except PaymentError as e:
-        data, payment = None, None
         print("   PAYMENT FAILED:", e)
+    payment = paid[-1] if paid else None
     for i, e in enumerate(log.last(), 3):
         print(f"{i}. {e.type:<9}", e.data)
 

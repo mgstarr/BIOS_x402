@@ -1,8 +1,16 @@
 """Defender's EventLog instance and helpers for recording its own events."""
 
+from typing import Literal
+
 from contracts.events import Event, EventLog
 
 SERVICE = "defender"
+
+
+class DefenderEvent(Event):
+    """The shared Event, plus "paid_unprotected": the guard was OFF and let a bill through unchecked."""
+
+    type: Literal["allowed", "blocked", "paid_unprotected", "failed"]
 
 
 class DefenderLog(EventLog):
@@ -16,6 +24,6 @@ log = DefenderLog()
 
 
 def record(event_type: str, data: dict) -> Event:
-    event = Event(service=SERVICE, type=event_type, data=data)
+    event = DefenderEvent(service=SERVICE, type=event_type, data=data)
     log.append(event)
     return event

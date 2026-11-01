@@ -1,6 +1,7 @@
 """Agent core: runs a task under a Mandate, deciding when and how much to pay via x402."""
 
 import json
+import os
 
 import requests
 from flask import Flask, jsonify, request
@@ -14,8 +15,9 @@ from payment.client import MOCK_SIGNER, SIGNER_URL
 
 MAX_STEPS = 6
 SYSTEM_PROMPT = (
-    "You are a helpful agent. First call list_paid_apis to see which data APIs exist and their prices. "
-    "Then use call_paid_api only for the endpoints the task needs, because each call costs money. "
+    "You are a helpful agent. If the task gives a URL, call call_paid_api with that exact URL. "
+    "Otherwise first call list_paid_apis to see which data APIs exist and their prices. "
+    "Use call_paid_api only for the endpoints the task needs, because each call costs money. "
     "Never invent numbers. When you have the data, answer the task briefly. "
     "If a tool returns an error, do not retry it: explain the error in your answer."
 )
@@ -25,10 +27,12 @@ LLM_FIELDS = ("data", "payment", "error", "catalog")
 app = Flask(__name__)
 
 
-def run_tool(name, args):
+def run_tool(name, args, context):
     """Run one tool the model asked for; return its result (or an error the model can read)."""
     if name not in FUNCTIONS:
         return {"error": f"unknown tool {name}"}
+    if name == "call_paid_api":  # the defender needs the task and mandate to judge the bill
+        args = {**args, "context": context}
     try:
         return FUNCTIONS[name](**args)
     except Exception as e:
@@ -38,7 +42,8 @@ def run_tool(name, args):
 def run_agent(task, mandate):
     """The agent loop: ask the model, run any tools it picks, feed results back, until it answers."""
     trace = [{"step": "mandate", "mandate": mandate.model_dump() if mandate else None}]
-    payments = []
+    payments = []  # every payment: paid or blocked
+    context = {"task": task, "mandate": mandate.model_dump() if mandate else None}
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": task},
@@ -59,12 +64,11 @@ def run_agent(task, mandate):
             trace.append({"step": "thought", "text": thought})
             trace.append({"step": "tool", "name": name, "args": args})
 
-            result = run_tool(name, args)
-            trace.extend(result.get("steps", []))  # 402 -> signed -> paid (or failed)
+            result = run_tool(name, args, context)
+            trace.extend(result.get("steps", []))  # 402 -> signed -> paid (or blocked / failed)
             for_llm = {k: v for k, v in result.items() if k in LLM_FIELDS}
             trace.append({"step": "result", **for_llm})
-            if result.get("payment"):
-                payments.append({"url": args.get("url"), **result["payment"]})
+            payments.extend(result.get("payments", []))
             messages.append({"role": "tool", "tool_name": name, "content": json.dumps(for_llm)})
 
     trace.append({"step": "answer", "text": None, "error": "max steps reached"})
@@ -92,6 +96,11 @@ def run():
     return jsonify(result)
 
 
+@app.get("/health")
+def health():
+    return jsonify({"ok": True, "service": "agent", "signer_url": SIGNER_URL})
+
+
 @app.get("/events")
 def get_events():
     return jsonify([e.model_dump() for e in events.last(100)])
@@ -101,11 +110,13 @@ def payment_mode():
     """One line saying whether payments are simulated or real, so a demo is never mislabelled."""
     if MOCK_SIGNER:
         return "Payments: SIMULATED (MOCK_SIGNER=true)"
+    real = os.getenv("SIGNER_URL_REAL", SIGNER_URL)  # the defender forwards to this signer
+    via = f" through the guard at {SIGNER_URL}" if real != SIGNER_URL else ""
     try:
-        address = requests.get(f"{SIGNER_URL}/address", timeout=5).json()["address"]
-        return f"Payments: real signer at {SIGNER_URL}, wallet {address}"
+        address = requests.get(f"{real}/address", timeout=5).json()["address"]
+        return f"Payments: real signer at {real}{via}, wallet {address}"
     except Exception:
-        return f"Payments: real signer at {SIGNER_URL} -- NOT REACHABLE yet"
+        return f"Payments: real signer at {real}{via} -- NOT REACHABLE yet"
 
 
 if __name__ == "__main__":

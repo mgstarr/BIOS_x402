@@ -6,7 +6,7 @@ import requests
 from dotenv import load_dotenv
 
 from contracts.events import EventLog
-from payment.client import MOCK_SIGNER, PaymentError, fetch_paid
+from payment.client import MOCK_SIGNER, PaymentBlocked, PaymentError, fetch_paid
 
 load_dotenv()
 SHOP_URL = os.getenv("SHOP_URL", "http://localhost:5001")
@@ -14,7 +14,13 @@ SHOP_URL = os.getenv("SHOP_URL", "http://localhost:5001")
 events = EventLog()  # shared with agent.py, served on GET /events
 
 # Payment event type -> name of the step in the /run trace ("request" is left out).
-TRACE_STEPS = {"payment_required": "402", "signed": "signed", "settled": "paid", "failed": "failed"}
+TRACE_STEPS = {"payment_required": "402", "signed": "signed", "settled": "paid",
+               "blocked": "blocked", "failed": "failed"}
+
+
+def is_simulated(tx):
+    """A mock receipt (e.g. "0xmock…") or mock signer means no money really moved."""
+    return MOCK_SIGNER or "mock" in str(tx).lower()
 
 
 class Recorder:
@@ -26,7 +32,10 @@ class Recorder:
     def append(self, event):
         events.append(event)
         if event.type in TRACE_STEPS:
-            self.steps.append({"step": TRACE_STEPS[event.type], **event.data})
+            step = {"step": TRACE_STEPS[event.type], **event.data}
+            if event.type == "settled":
+                step["simulated"] = is_simulated(event.data["tx"])
+            self.steps.append(step)
 
 
 def list_paid_apis():
@@ -39,21 +48,36 @@ def list_paid_apis():
     return {"catalog": resp.json()}
 
 
-def call_paid_api(url):
-    """Pay for and fetch one endpoint. Returns data, a short payment summary, and the payment steps."""
+def call_paid_api(url, context=None):
+    """Pay for and fetch one URL. context = {"task", "mandate"}, passed on to the defender.
+
+    Returns the data, the last payment (for the LLM), every payment as
+    {url, amount_usd, payTo, status: paid|blocked, reason, tx}, and the payment steps.
+    """
     if url.startswith("/"):
         url = SHOP_URL + url
-    recorder = Recorder()
+    recorder, paid = Recorder(), []
+    result = {"steps": recorder.steps, "payments": []}
+    blocked = None
     try:
-        data, payment = fetch_paid(url, recorder)
+        result["data"] = fetch_paid(url, recorder, paid, context)
+    except PaymentBlocked as e:
+        result["error"] = str(e)  # the LLM reads "payment blocked by the guard: <reason>"
+        blocked = e
     except PaymentError as e:
-        return {"error": str(e), "steps": recorder.steps}
-    summary = None
-    if payment:
-        simulated = MOCK_SIGNER or "mock" in str(payment["tx"]).lower()  # e.g. "0xmock…" receipts
-        summary = {"amount_usd": payment["amount_usd"], "tx": payment["tx"], "simulated": simulated}
-        recorder.steps[-1]["simulated"] = simulated  # the "paid" step
-    return {"data": data, "payment": summary, "steps": recorder.steps}
+        result["error"] = str(e)
+
+    for p in paid:  # payments that went through (a dishonest shop may take two)
+        simulated = is_simulated(p["tx"])
+        result["payments"].append({"url": url, "amount_usd": p["amount_usd"], "payTo": p["payTo"],
+                                   "status": "paid", "reason": None, "tx": p["tx"], "simulated": simulated})
+        result["payment"] = {"amount_usd": p["amount_usd"], "tx": p["tx"], "simulated": simulated}
+    if blocked:
+        bill = [s for s in recorder.steps if s["step"] == "402"][-1]  # the bill the guard refused
+        result["payments"].append({"url": url, "amount_usd": bill["amount_usd"], "payTo": bill["payTo"],
+                                   "status": "blocked", "check": blocked.check, "reason": blocked.reason,
+                                   "tx": None})
+    return result
 
 
 # What the model sees: name, purpose and arguments of each tool.
@@ -76,7 +100,10 @@ TOOLS = [
                 "properties": {
                     "url": {
                         "type": "string",
-                        "description": "A catalog path plus ?symbol=BTC, ETH or SOL, e.g. /api/price?symbol=ETH",
+                        "description": (
+                            "A full URL given in the task, or a catalog path plus ?symbol=BTC, ETH or SOL, "
+                            "e.g. /api/price?symbol=ETH"
+                        ),
                     }
                 },
                 "required": ["url"],
