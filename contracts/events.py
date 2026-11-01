@@ -17,8 +17,9 @@ class Event(BaseModel):
         "settled",
         "failed",
         "answer",
-	"allowed",
+        "allowed",
         "blocked",
+        "paid_unprotected",
         "attack",
         "result",
     ]

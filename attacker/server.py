@@ -1,5 +1,6 @@
 """Attacker Flask server: fire attacks, run the suite, keep a scoreboard, expose GET /events."""
 
+import threading
 from collections import defaultdict
 
 import requests
@@ -13,6 +14,24 @@ app = Flask(__name__)
 events = EventLog()
 board = {"attacks": defaultdict(lambda: defaultdict(lambda: {"fired": 0, "blocked": 0, "stolen": 0, "lost_usd": 0.0})),
          "players": defaultdict(lambda: defaultdict(lambda: {"fired": 0, "blocked": 0, "stolen": 0, "lost_usd": 0.0}))}
+
+# Simulated wallet (used when the chain is unreachable): $100 minus every /fire loss since /reset.
+START_USD = 100.0
+SIM = {"lost": 0.0}
+sim_lock = threading.Lock()
+
+
+def sim_wallet():
+    with sim_lock:
+        return {"agent": round(START_USD - SIM["lost"], 6), "attacker": round(SIM["lost"], 6)}
+
+
+def sim_take(amount):
+    """Book a simulated loss; the wallet can't go below $0. Returns what was actually taken."""
+    with sim_lock:
+        taken = round(min(amount, START_USD - SIM["lost"]), 6)
+        SIM["lost"] = round(SIM["lost"] + taken, 6)
+        return taken
 
 
 def guard_state():
@@ -38,10 +57,14 @@ def fire_one(attack, player, custom=None):
     events.append(Event(service="attacker", type="attack",
                         data={"attack_id": attack["id"], "player": player, "guard": guard, "simulated": runner.MOCK}))
     run = runner.fire(attack, player, custom)
+    if run.get("simulated") and run.get("lost_usd", 0) > 0:
+        run["lost_usd"] = sim_take(run["lost_usd"])
     s = evaluator.score(attack, run)
     record(attack["id"], player, guard, s)
     events.append(Event(service="attacker", type="result", data={**s, "player": player, "guard": guard}))
-    return {**s, "guard": guard, "player": player, "run": run}
+    w = wallet_data()
+    return {**s, "guard": guard, "player": player, "amount_usd": s["lost_usd"], "tx_hash": s["tx"],
+            "balance_usd": w["agent"], "loot_usd": w["attacker"], "run": run}
 
 
 @app.get("/health")
@@ -85,14 +108,31 @@ def scoreboard():
     return jsonify({"attacks": board["attacks"], "players": board["players"], "simulated": runner.MOCK})
 
 
+def wallet_data():
+    b = None if runner.MOCK else runner.balances([AGENT, ATTACKER])
+    if b is None:
+        return {**sim_wallet(), "simulated": True}
+    return {"agent": b[AGENT], "attacker": b[ATTACKER], "simulated": False}
+
+
 @app.get("/wallet")
 def wallet():
-    if runner.MOCK:
-        return jsonify({"agent": 100.0, "attacker": 0.0, "simulated": True})
-    b = runner.balances([AGENT, ATTACKER])
-    if b is None:
-        return jsonify({"error": "chain not reachable"}), 502
-    return jsonify({"agent": b[AGENT], "attacker": b[ATTACKER], "simulated": False})
+    w = wallet_data()
+    return jsonify({**w, "balance_usd": w["agent"], "loot_usd": w["attacker"], "start_usd": START_USD})
+
+
+@app.post("/reset")
+def reset():
+    """Refill the simulated wallet and clear the loot. Scores are kept unless the body is
+    {"all": true} (the dashboard's "Start new demo"), which also clears the scoreboard and events.
+    No effect on a real chain."""
+    with sim_lock:
+        SIM["lost"] = 0.0
+    if (request.get_json(silent=True) or {}).get("all") is True:
+        board["attacks"].clear()
+        board["players"].clear()
+        events._events.clear()
+    return wallet()
 
 
 @app.get("/events")

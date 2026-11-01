@@ -15,10 +15,12 @@ SHELL = """<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{ title }} | x402 Red/Blue</title>
 <link rel="stylesheet" href="/assets/style.css">
+{% for href in styles %}<link rel="stylesheet" href="{{ href }}">{% endfor %}
 </head>
 <body class="theme-{{ theme }}">
 <nav class="topnav">
-  <a class="brand" href="/">x402 Red/Blue</a>
+  <a class="brand" href="/"><span class="logo">&#128737;</span> x402 Red/Blue</a>
+  <a href="/" class="{{ 'on' if active == 'demo' }}">Demo</a>
   <a href="/attack" class="{{ 'on' if active == 'attack' }}">Attack Lab</a>
   <a href="/defend" class="{{ 'on' if active == 'defend' }}">Defender</a>
   <a href="{{ live_url }}" target="_blank">TickToll Live &#8599;</a>
@@ -32,7 +34,7 @@ SHELL = """<!DOCTYPE html>
 
 
 def render_page(title: str, body: str, active: str = "", theme: str = "plain",
-                scripts: tuple = ()) -> str:
+                scripts: tuple = (), styles: tuple = ()) -> str:
     """Wrap a page's HTML body in the shared shell (head + nav)."""
     return render_template_string(SHELL, title=title, body=body, active=active,
-                                  theme=theme, scripts=scripts, live_url=LIVE_URL)
+                                  theme=theme, scripts=scripts, styles=styles, live_url=LIVE_URL)

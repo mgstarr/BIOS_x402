@@ -1,37 +1,68 @@
-<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<title>TickToll Defender</title>
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<link rel="stylesheet" href="{{ url_for('defend.static', filename='defend.css') }}">
-</head>
-<body>
-<header>
-  <h1>TickToll Defender</h1>
-  <div id="sim" class="sim" {% if not mock %}hidden{% endif %}>SIMULATED DATA</div>
-</header>
+<div id="defend" class="defend" data-lookalike="{{ lookalike }}" data-ticktoll="{{ ticktoll }}" data-hacker="{{ hacker }}">
 
-<section class="top">
-  <button id="switch" class="switch on" type="button"><span id="switch-label">Guard ON</span></button>
-  <div class="tiles">
-    <div class="tile"><div class="num" id="t-checked">0</div><div class="lbl">Checked</div></div>
-    <div class="tile"><div class="num" id="t-blocked">0</div><div class="lbl">Blocked</div></div>
-    <div class="tile"><div class="num" id="t-allowed">0</div><div class="lbl">Allowed</div></div>
-    <div class="tile"><div class="num" id="t-saved">$0.00</div><div class="lbl">Money saved</div></div>
+<!-- 1) hero -->
+<section class="hero">
+  <button id="switch" class="guard on" type="button" aria-pressed="true">
+    <svg class="shield" viewBox="0 0 64 72" aria-hidden="true">
+      <path class="body" d="M32 3 6 13v20c0 17 11 30 26 36 15-6 26-19 26-36V13Z"/>
+      <path class="tick" d="m20 36 9 9 16-18"/>
+      <path class="crack" d="M33 4 27 22l9 9-8 11 6 10-4 16"/>
+    </svg>
+    <span class="gtext"><b id="switch-label">Guard ON</b><small id="switch-sub">Every payment is checked</small></span>
+  </button>
+  <div class="hero-text">
+    <h1>The Guard</h1>
+    <p class="muted">Checks every payment the AI wants to make, before any money moves.</p>
+  </div>
+  <div class="hero-actions">
+    <span id="sim" class="simbadge" {% if not mock %}hidden{% endif %}>SIMULATED DATA</span>
+    <button id="reset" class="btn small" type="button">Reset</button>
   </div>
 </section>
 
-<section>
-  <h2>Live feed</h2>
-  <div id="feed" class="feed"></div>
+<!-- 2) headline: Guard ON vs Guard OFF -->
+<section class="versus panel">
+  <div class="vs-head">
+    <h2>Guard ON vs Guard OFF <small class="muted">the same 8 attacks + 2 honest purchases</small></h2>
+    <button id="run" class="btn" type="button">Run full test</button>
+  </div>
+  <div id="progress" class="progress" hidden>
+    <div class="ptext" id="ptext">Starting…</div>
+    <div class="pbar"><i id="pfill"></i></div>
+  </div>
+  <div id="score" class="score">
+    <p class="muted empty">No test yet. Press <b>Run full test</b> to fire every attack with the guard ON, then OFF.</p>
+  </div>
 </section>
 
-<section>
-  <h2>Scorecard</h2>
-  <button id="run" class="run" type="button">Run full test</button>
-  <div id="score" class="score"></div>
+<!-- 3) stat tiles -->
+<section class="tiles">
+  <div class="tile"><div class="num" id="t-checked">0</div><div class="lbl">Checked</div></div>
+  <div class="tile red"><div class="num" id="t-blocked">0</div><div class="lbl">Blocked</div></div>
+  <div class="tile green"><div class="num" id="t-allowed">0</div><div class="lbl">Allowed</div></div>
+  <div class="tile amber"><div class="num" id="t-unprotected">0</div><div class="lbl">Paid with guard OFF</div></div>
+  <div class="tile blue"><div class="num" id="t-saved">0¢</div><div class="lbl">Money saved</div></div>
 </section>
-<script src="{{ url_for('defend.static', filename='defend.js') }}"></script>
-</body>
-</html>
+
+<!-- 6) legend -->
+<details class="legend">
+  <summary><b>What does the guard check?</b> <span class="muted">8 quick checks on every bill (click to see)</span></summary>
+  <ul id="legend"></ul>
+</details>
+
+<!-- 4 + 5) live feed with filters -->
+<section class="feedwrap">
+  <div class="feedhead">
+    <h2>Live feed <small class="muted">newest first · click a payment to see all 8 checks</small></h2>
+    <div class="filters" role="group" aria-label="Filter the feed">
+      <button class="chip on" data-filter="all" type="button">All</button>
+      <button class="chip" data-filter="blocked" type="button">Blocked</button>
+      <button class="chip" data-filter="allowed" type="button">Allowed</button>
+      <button class="chip" data-filter="paid_unprotected" type="button">Guard OFF</button>
+    </div>
+  </div>
+  <div id="feed" class="feed" data-filter="all"></div>
+  <p id="empty" class="muted empty">Waiting for payments…</p>
+</section>
+
+</div>

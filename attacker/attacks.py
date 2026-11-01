@@ -35,7 +35,7 @@ ATTACKS = [
     _atk("overcharge", "Overcharge", "The bill asks for far more than the data is worth.",
          f"{EVIL}/evil/overcharge?symbol=ETH", "price", "price", "easy"),
     _atk("drain", "Drain", "The bill tries to take the whole wallet in one payment.",
-         f"{EVIL}/evil/drain?symbol=ETH", "price", "drain cap", "easy"),
+         f"{EVIL}/evil/drain?symbol=ETH", "price", "spending cap", "easy"),
     _atk("wrong-wallet", "Wrong wallet", "A compromised shop quietly swaps the payee address.",
          f"{SHOP}/compromised/wrong-wallet?symbol=ETH", "payee", "payee", "medium"),
     _atk("lookalike", "Lookalike wallet", "The payee address looks almost like the real one.",
