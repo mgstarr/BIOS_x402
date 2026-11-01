@@ -116,6 +116,12 @@ _lock = threading.Lock()
 _mock = {"balance": START_BALANCE, "loot": 0.0, "guard": "off", "scores": {}}
 
 
+def reset_local() -> None:
+    """Clear this page's own demo state (wallet, loot, leaderboard). Used by "Start new demo"."""
+    with _lock:
+        _mock.update(balance=START_BALANCE, loot=0.0, guard="off", scores={})
+
+
 def _fake_tx() -> str:
     return "0x" + secrets.token_hex(32)
 

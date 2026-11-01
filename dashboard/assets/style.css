@@ -23,6 +23,8 @@ a { color: inherit; }
 .topnav .brand { color: var(--text); font-weight: 800; margin-right: auto; }
 .theme-red .topnav a.on { box-shadow: inset 0 -3px 0 var(--red); }
 .theme-blue .topnav a.on { box-shadow: inset 0 -3px 0 var(--blue); }
+.theme-demo .topnav a.on { box-shadow: inset 0 -3px 0 var(--amber); }
+.topnav .logo { color: var(--blue); }
 
 /* --- buttons --- */
 .btn { display: inline-block; background: var(--red); color: #fff; border: 0;
@@ -47,6 +49,22 @@ a { color: inherit; }
 .bigcard.red { border-color: var(--red); }
 .bigcard.blue { border-color: var(--blue); }
 .bigcard.green { border-color: var(--green); }
+
+/* --- demo landing: tiles with a story + button, "Start new demo", toast --- */
+.demo .bigcard { align-items: center; }
+.demo .bigcard p { margin: .3rem 0 .8rem; flex: 1; color: #d6dae2; font-size: 1rem; }
+.btn.blue { background: var(--blue); color: #04152b; }
+.btn.green { background: var(--green); color: #04220f; }
+.startdemo { margin-top: 2rem; font-size: 1.5rem; padding: 1rem 2.4rem; border-radius: 16px;
+  background: var(--amber); color: #000; }
+.small-note { font-size: .9rem; margin: .6rem 0 0; }
+.toast { position: fixed; left: 50%; bottom: 2rem; z-index: 20; transform: translate(-50%, 2rem); opacity: 0;
+  background: var(--green); color: #04220f; padding: .9rem 1.8rem; border-radius: 14px; font-size: 1.3rem;
+  display: flex; flex-direction: column; align-items: center; box-shadow: 0 10px 30px #0008;
+  transition: opacity .3s, transform .3s; pointer-events: none; }
+.toast.show { opacity: 1; transform: translate(-50%, 0); }
+.toast.warn { background: var(--amber); color: #000; }
+.toast small { font-size: .85rem; font-weight: 600; }
 
 /* --- attack lab: two columns, right side sticky so results never need scrolling --- */
 .theme-red main { max-width: none; padding: .8rem 1.2rem; }

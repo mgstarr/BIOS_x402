@@ -19,7 +19,7 @@
   --grey: #8f9bb0;            /* expired */
   --grey-dim: rgba(143, 155, 176, 0.14);
   --radius: 16px;
-  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --sans: "Segoe UI", system-ui, -apple-system, Arial, sans-serif;  /* same as the dashboard */
   --mono: ui-monospace, "Cascadia Code", "Cascadia Mono", Consolas, "SF Mono", Menlo, monospace;
 }
 

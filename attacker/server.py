@@ -123,9 +123,15 @@ def wallet():
 
 @app.post("/reset")
 def reset():
-    """Refill the simulated wallet and clear the loot (scores are kept). No effect on a real chain."""
+    """Refill the simulated wallet and clear the loot. Scores are kept unless the body is
+    {"all": true} (the dashboard's "Start new demo"), which also clears the scoreboard and events.
+    No effect on a real chain."""
     with sim_lock:
         SIM["lost"] = 0.0
+    if (request.get_json(silent=True) or {}).get("all") is True:
+        board["attacks"].clear()
+        board["players"].clear()
+        events._events.clear()
     return wallet()
 
 

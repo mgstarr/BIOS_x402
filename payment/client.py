@@ -30,6 +30,18 @@ class PaymentError(Exception):
     """Any step of the x402 flow failed; the message says which one and why."""
 
 
+class PaymentTimeout(PaymentError):
+    """A service didn't answer in time or couldn't be reached."""
+
+
+class PaymentBlocked(PaymentError):
+    """The signer (or the defender in front of it) refused to sign: HTTP 403."""
+
+    def __init__(self, reason, check=None):
+        super().__init__(reason)
+        self.reason, self.check = reason, check
+
+
 def pick_option(bill):
     """Choose the first payment option we know how to pay: exact USDC on Base Sepolia."""
     for req in bill.accepts:
@@ -56,10 +68,12 @@ def _http(method, url, what, timeout=30, **kwargs):
     """One HTTP call; network problems become a short PaymentError naming the piece that failed."""
     try:
         return requests.request(method, url, timeout=timeout, **kwargs)
-    except requests.ConnectionError:
-        raise PaymentError(f"{what} not reachable at {url} -- is it running? check the URL in .env / firewall")
     except requests.Timeout:
-        raise PaymentError(f"{what} timed out after {timeout}s ({url})")
+        raise PaymentTimeout(f"{what} timed out after {timeout:g} s ({url})")
+    except requests.ConnectionError:
+        raise PaymentTimeout(f"{what} not reachable at {url} -- is it running? check the URL in .env / firewall")
+    except requests.RequestException as e:
+        raise PaymentError(f"{what} request failed: {e.__class__.__name__}")
 
 
 def _short(err):
@@ -81,7 +95,23 @@ def sign(req):
     """Get the bill signed: locally in mock mode, otherwise by the signer service (holds the key)."""
     if MOCK_SIGNER:
         return mock_sign(req)
-    resp = _http("POST", f"{SIGNER_URL}/sign", "signer", json={"requirements": req.model_dump()})
+    return sign_remote(req)
+
+
+def sign_remote(req, context=None, signer_url=None, timeout=30):
+    """Ask the signer at signer_url (default SIGNER_URL; may be the defender) to sign. Never mocks.
+    A 403 means the defender said no: raises PaymentBlocked with its reason."""
+    url = (signer_url or SIGNER_URL).rstrip("/")
+    body = {"requirements": req.model_dump()}
+    if context is not None:
+        body["context"] = context
+    resp = _http("POST", f"{url}/sign", "signer", timeout=timeout, json=body)
+    if resp.status_code == 403:
+        try:
+            info = resp.json()
+        except ValueError:
+            info = {}
+        raise PaymentBlocked(info.get("reason") or resp.text[:200] or "blocked by the guard", info.get("check"))
     if resp.status_code != 200:
         raise PaymentError(f"signer returned {resp.status_code}: {resp.text[:200]}")
     try:
@@ -132,6 +162,41 @@ def _fetch_paid(url, log):
     payment = {"resource": url, "amount_usd": amount_usd, "tx": receipt.transaction, "payer": receipt.payer}
     log.append(Event(service="agent", type="settled", data=payment))
     return resp.json(), payment
+
+
+def pay(url, context=None, signer_url=None, timeout=10, max_payments=2):
+    """GET url and pay its bills through the remote signer, like a buyer that trusts the shop.
+
+    Pays again if the shop bills again after taking the money (up to max_payments).
+    Never raises: returns {"payments": [...], "status": int|None} plus "blocked"/"block_reason"/
+    "block_check" if the guard said no, or "error" (and "failed" for timeouts) if something broke.
+    """
+    out = {"payments": [], "status": None}
+    try:
+        resp = _http("GET", url, "shop", timeout=timeout)
+        if resp.status_code not in (200, 402):
+            raise PaymentError(f"shop returned {resp.status_code} instead of a bill")
+        while resp.status_code == 402 and len(out["payments"]) < max_payments:
+            bill = _decode(resp.headers.get(PAYMENT_REQUIRED), PaymentRequired, f"shop's {PAYMENT_REQUIRED}")
+            req = pick_option(bill)
+            payload = sign_remote(req, context, signer_url, timeout)
+            resp = _http("GET", url, "shop", timeout=timeout, headers={PAYMENT_SIGNATURE: encode_header(payload)})
+            raw = resp.headers.get(PAYMENT_RESPONSE)
+            if not raw:
+                raise PaymentError(f"shop rejected payment ({resp.status_code}): {resp.text[:200]}")
+            receipt = _decode(raw, SettlementResponse, f"shop's {PAYMENT_RESPONSE}")
+            if not receipt.success:
+                raise PaymentError(f"settlement failed: {receipt.errorReason}")
+            out["payments"].append({"resource": url, "amount_usd": int(req.amount) / 1_000_000,
+                                    "tx": receipt.transaction, "payTo": req.payTo, "asset": req.asset})
+        out["status"] = resp.status_code
+    except PaymentBlocked as e:
+        out.update(blocked=True, block_reason=e.reason, block_check=e.check)
+    except PaymentTimeout as e:
+        out.update(error=str(e), failed=True)
+    except PaymentError as e:
+        out["error"] = str(e)
+    return out
 
 
 if __name__ == "__main__":

@@ -74,7 +74,8 @@ BLOCKED = [
     ("asset", bill(network="eip155:1"), {}),
     ("payee", bill(pay_to=ATTACKER), {}),
     ("payee", bill(pay_to=LOOKALIKE), {}),
-    ("cap", bill(amount="900000"), {}),
+    ("cap", bill(path="/api/uncatalogued", amount="900000"),
+     {"mandate": {"max_per_payment_usd": 5.0, "budget_usd": 50.0}}),
     ("price", bill(amount="50000"), {}),  # 5 cents for a 1-cent item
     ("mandate", bill(path="/api/report", amount="50000"),
      {"mandate": {"max_per_payment_usd": 0.02, "budget_usd": 0.50}}),
@@ -120,7 +121,7 @@ def test_price_reason_is_plain_english(client):
         r = sign(client, bill("/evil/x", amount="400000", origin=EVIL, pay_to=ATTACKER))
     finally:
         del CATALOGS[EVIL]
-    assert r.get_json()["reason"] == "Price is 40x the usual 1 cent"
+    assert r.get_json()["reason"] == "Price is 40x the usual 1¢"
 
 
 def test_unknown_shop_is_pinned_to_first_wallet(client):
@@ -130,14 +131,58 @@ def test_unknown_shop_is_pinned_to_first_wallet(client):
     assert sign(client, bill("/c", origin=EVIL, pay_to=ATTACKER)).status_code == 200
 
 
-def test_guard_off_forwards_but_still_logs(client):
+def test_guard_off_is_paid_unprotected(client):
     assert client.post("/mode", json={"enabled": False}).get_json() == {"enabled": False}
     r = sign(client, bill(amount="900000", pay_to=ATTACKER))
     assert r.status_code == 200
     ev = client.get("/events").get_json()[-1]
-    assert ev["type"] == "allowed" and ev["data"]["guard"] == "off"
-    assert ev["data"]["would_block"]["check"] == "payee"
-    assert client.get("/stats").get_json()["blocked"] == 0
+    assert ev["type"] == "paid_unprotected" and ev["data"]["verdict"] == "paid_unprotected"
+    assert ev["data"]["guard"] == "off"
+    assert ev["data"]["would_have_blocked"] == ["payee", "price", "mandate", "cap"]
+    assert len(ev["data"]["checks"]) == 8
+    stats = client.get("/stats").get_json()
+    assert stats["unprotected"] == 1 and stats["allowed"] == 0 and stats["blocked"] == 0
+
+
+def test_overcharge_headline_is_price_and_all_failures_returned(client):
+    """95c for a 1c item fails price AND mandate AND cap: price is the headline."""
+    r = sign(client, bill(amount="950000"))
+    body = r.get_json()
+    assert r.status_code == 403 and body["check"] == "price"
+    assert body["reason"] == "Price is 95x the usual 1¢"
+    assert body["failed"] == ["price", "mandate", "cap"]
+    ev = client.get("/events").get_json()[-1]
+    assert ev["data"]["failed"] == ["price", "mandate", "cap"]
+
+
+def test_scam_shop_catalog_is_not_trusted_for_price(client):
+    """EvilData lists its overcharge at 95c; the usual price must come from TickToll (1c)."""
+    CATALOGS[EVIL] = {"/evil/overcharge": 0.95, "/evil/report": 0.90}
+    try:
+        r = sign(client, bill("/evil/overcharge", amount="950000", origin=EVIL, pay_to=ATTACKER))
+        assert r.get_json()["reason"] == "Price is 95x the usual 1¢"
+        r = sign(client, bill("/evil/report", amount="900000", origin=EVIL, pay_to=ATTACKER))
+        assert r.get_json()["reason"] == "Price is 18x the usual 5¢"
+    finally:
+        del CATALOGS[EVIL]
+
+
+def test_allowed_event_never_shows_a_failed_check(client):
+    """Checks run once, before the ledger records the payment, so no self-made 'duplicate'."""
+    for path, amount in [("/api/price", "10000"), ("/api/sentiment", "20000"), ("/api/report", "50000")]:
+        assert sign(client, bill(path, amount=amount)).status_code == 200
+    for ev in client.get("/events").get_json():
+        assert ev["type"] == "allowed"
+        assert all(c["ok"] for c in ev["data"]["checks"]), ev["data"]["checks"]
+        assert ev["data"]["failed"] == []
+
+
+def test_money_and_labels():
+    from defender.mandate import money
+    assert [money(x) for x in (0.02, 0.95, 0.005, 1, 90)] == ["2¢", "95¢", "0.5¢", "$1.00", "$90.00"]
+    assert dict(policy.CHECKS)["cap"] == "spending cap"
+    assert [cid for cid, _ in policy.CHECKS] == ["origin", "asset", "payee", "price", "mandate",
+                                                  "cap", "expiry", "duplicate"]
 
 
 def test_forwards_to_real_signer(client, monkeypatch):
