@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block title %}TickToll{% endblock %}
+{% block body %}
+<div class="shop-hero">
+  <section class="panel">
+    <div class="shop-head">
+      <div class="shop-mark">TT</div>
+      <div>
+        <h1>TickToll</h1>
+        <p>Live data for apps and AI agents: crypto, weather, shares, currencies and news.
+           No account, no subscription. Pay a few cents per answer, in USDC.</p>
+      </div>
+    </div>
+    <div class="how">
+      <div><b>1. Pick an API</b><span>Choose what you need from the shelf below.</span></div>
+      <div><b>2. See the bill</b><span>We tell you the exact price before you pay.</span></div>
+      <div><b>3. Pay in USDC</b><span>One signed payment, settled on the blockchain.</span></div>
+      <div><b>4. Get your data</b><span>Delivered instantly, with a receipt.</span></div>
+    </div>
+  </section>
+  <section class="panel">
+    <span class="label">Our business today</span>
+    <div class="mini-figures" style="margin-top:12px">
+      <div><span class="label">Revenue</span><b id="f-revenue">$0.00</b></div>
+      <div><span class="label">Paid invoices</span><b id="f-paid">0</b></div>
+      <div><span class="label">Requests</span><b id="f-requests">0</b><span class="small muted" id="f-declined"></span></div>
+      <div><span class="label">Wallet balance</span><b id="f-balance">–</b></div>
+    </div>
+    <p class="small muted" style="margin-top:14px">Paid into <span class="mono" id="wallet">–</span></p>
+  </section>
+</div>
+
+<section class="panel">
+  <div class="panel-head"><h2>APIs on sale</h2><span class="small muted">Click any card to try it.</span></div>
+  <div class="shelf-bar">
+    <div class="row wrap" id="shelves"></div>
+    <input id="search" placeholder="Search, e.g. weather, Apple, rupee">
+  </div>
+  <div class="cards" id="cards"></div>
+</section>
+
+<section class="panel hidden" id="try-panel">
+  <div class="panel-head"><h2 id="try-title">Try it</h2><span class="small muted" id="try-about"></span>
+    <button class="ghost small aside" id="try-close">Close</button></div>
+  <div class="try">
+    <div class="try-left">
+      <div class="steps-mini" id="progress">
+        <span data-s="1">Choose</span><span data-s="2">See the bill</span><span data-s="3">Pay</span><span data-s="4">Get data</span>
+      </div>
+      <span class="label" id="param-label">Choose</span>
+      <div class="options" id="options"></div>
+      <div style="margin-top:18px; display:grid; gap:8px">
+        <button class="ghost" id="see-bill">See the bill first</button>
+        <button class="gold big" id="pay">Pay and get the data</button>
+      </div>
+      <p class="small muted" style="margin-top:12px">Paid from the AI agent's demo wallet. Every payment goes
+        through the guard, so it appears on the Guard page too.</p>
+    </div>
+    <div class="try-right" id="try-out">
+      <p class="muted">Pick an option, then see the bill or buy straight away.</p>
+    </div>
+  </div>
+</section>
+
+<div class="grid cols-wide section-gap">
+  <section class="panel">
+    <div class="panel-head"><h2>Incoming requests</h2><span class="small muted">Every buyer, live.</span>
+      <span class="small muted aside" id="mock-note"></span></div>
+    <table>
+      <thead><tr><th>Time</th><th>What they bought</th><th>Buyer</th><th class="num">Amount</th><th>Status</th></tr></thead>
+      <tbody id="orders"><tr><td colspan="5" class="empty">No requests yet.</td></tr></tbody>
+    </table>
+  </section>
+  <section class="panel">
+    <div class="panel-head"><h2>Billing</h2><span class="small muted">Click a paid request.</span></div>
+    <div id="invoice"><p class="empty">Select a paid request to see its invoice.</p></div>
+  </section>
+</div>
+{% endblock %}
+{% block scripts %}<script src="/static/provider.js"></script>{% endblock %}

@@ -1,6 +1,7 @@
 """Attack runner: fires one attack through the agent or directly through the defender."""
 
 import os
+import time
 from urllib.parse import urlencode
 
 import requests
@@ -9,10 +10,7 @@ from web3 import HTTPProvider, Web3
 
 from attacker.attacks import ATTACKER, EVIL, LOOKALIKE, TICKTOLL
 from chain.config import RPC_URL, USDC_ABI, USDC_ADDRESS
-from contracts.payment import (
-    PAYMENT_REQUIRED, PAYMENT_RESPONSE, PAYMENT_SIGNATURE,
-    PaymentPayload, PaymentRequired, SettlementResponse, decode_header, encode_header,
-)
+from payment import client
 
 load_dotenv()
 MOCK = os.getenv("MOCK", "false").lower() == "true"
@@ -21,12 +19,27 @@ AGENT_URL = os.getenv("AGENT_URL", "http://localhost:7000")
 SIGNER_URL = os.getenv("SIGNER_URL", "http://localhost:7003")
 DEFENDER_URL = os.getenv("DEFENDER_URL", "http://localhost:7003")
 MANDATE = {"max_per_payment_usd": 0.10, "budget_usd": 0.50}
+TIMEOUT_S = float(os.getenv("ATTACK_TIMEOUT_S", "10"))  # every HTTP call in direct mode
+AGENT_TIMEOUT_S = float(os.getenv("AGENT_TIMEOUT_S", "180"))  # agent mode runs an LLM: needs longer
+CHAIN_CHECK_TTL_S = 60
+_chain = {"ts": 0.0, "up": False}
 
 MOCK_STATE = {"guard": True}
 
 
 def checksum(addr):
     return Web3.to_checksum_address(addr)
+
+
+def chain_up():
+    """Is the RPC node answering? Cached, so a missing chain doesn't slow every request."""
+    if time.time() - _chain["ts"] > CHAIN_CHECK_TTL_S:
+        try:
+            up = Web3(HTTPProvider(RPC_URL, request_kwargs={"timeout": 2})).is_connected()
+        except Exception:
+            up = False
+        _chain.update(ts=time.time(), up=up)
+    return _chain["up"]
 
 
 def usdc_balance(addr):
@@ -36,6 +49,8 @@ def usdc_balance(addr):
 
 
 def balances(addrs):
+    if not chain_up():
+        return None
     try:
         return {a: usdc_balance(a) for a in addrs}
     except Exception:
@@ -46,9 +61,25 @@ def is_ticktoll(addr):
     return str(addr).lower() == TICKTOLL.lower()
 
 
+def is_real_usdc(asset):
+    return asset is None or str(asset).lower() == USDC_ADDRESS.lower()
+
+
+def simulated_loss(payments):
+    """No chain: money lost = real-USDC payments that went anywhere but TickToll."""
+    return round(sum(p["amount_usd"] for p in payments
+                     if not is_ticktoll(p.get("payTo")) and is_real_usdc(p.get("asset"))), 6)
+
+
 def custom_url(custom):
     keys = ("price_usd", "pay_to", "token", "expiry_s", "hidden_text")
     return f"{EVIL}/evil/custom?" + urlencode({k: custom[k] for k in keys if custom.get(k) not in (None, "")})
+
+
+def lure_task(lure, url):
+    """The message that sends the AI to the attacker's URL. {url} marks where the link goes."""
+    lure = (lure or "").strip() or "Get the ETH coin price from {url}"
+    return lure.replace("{url}", url) if "{url}" in lure else f"{lure} {url}"
 
 
 def mandate_for(task):
@@ -56,56 +87,42 @@ def mandate_for(task):
 
 
 def run_agent(task):
-    r = requests.post(f"{AGENT_URL}/run", json={"task": task, "mandate": mandate_for(task)}, timeout=180)
+    r = requests.post(f"{AGENT_URL}/run", json={"task": task, "mandate": mandate_for(task)},
+                      timeout=AGENT_TIMEOUT_S)
     body = r.json()
     if r.status_code != 200:
         return {"error": body.get("error", r.text[:200]), "payments": []}
-    return {"answer": body.get("answer"), "payments": body.get("payments", [])}
+    payments = body.get("payments", [])
+    out = {"answer": body.get("answer"), "payments": [p for p in payments if p.get("status", "paid") == "paid"]}
+    blocked = [p for p in payments if p.get("status") == "blocked"]
+    if blocked:  # the guard refused at least one bill during this run
+        out.update(blocked=True, block_check=blocked[0].get("check"), block_reason=blocked[0].get("reason"))
+    return out
 
 
 def run_direct(task, intended_url, final_url):
-    out = {"payments": []}
-    r = requests.get(final_url, timeout=30)
-    if r.status_code != 402:
-        out["error"] = f"no bill (status {r.status_code})"
-        return out
-    bill = decode_header(r.headers.get(PAYMENT_REQUIRED, ""), PaymentRequired)
-    req = bill.accepts[0]
+    """Pay the bill via payment/client.py, signing through SIGNER_URL (the defender on 7003)."""
     ctx = {"task": task, "mandate": mandate_for(task), "intended_url": intended_url, "final_url": final_url}
-    s = requests.post(f"{SIGNER_URL}/sign", json={"requirements": req.model_dump(), "context": ctx}, timeout=30)
-    if s.status_code == 403:
-        out["blocked"] = True
-        out["block_reason"] = s.text[:300]
-        return out
-    if s.status_code != 200:
-        out["error"] = f"signer {s.status_code}: {s.text[:200]}"
-        return out
-    payload = PaymentPayload.model_validate(s.json())
-    r2 = requests.get(final_url, headers={PAYMENT_SIGNATURE: encode_header(payload)}, timeout=60)
-    if r2.status_code != 200:
-        out["error"] = f"shop rejected payment ({r2.status_code})"
-        return out
-    receipt = decode_header(r2.headers.get(PAYMENT_RESPONSE, ""), SettlementResponse)
-    if receipt.success:
-        out["payments"].append({"resource": final_url, "amount_usd": int(req.amount) / 1_000_000,
-                                "tx": receipt.transaction, "payTo": req.payTo})
-    else:
-        out["error"] = f"settlement failed: {receipt.errorReason}"
+    out = client.pay(final_url, context=ctx, signer_url=SIGNER_URL, timeout=TIMEOUT_S)
+    if out.get("blocked"):
+        out["decision"] = {"verdict": "blocked", "check": out.get("block_check"), "reason": out.get("block_reason")}
+    elif not out["payments"] and not out.get("error") and out.get("status") == 200:
+        out["error"] = "no bill: the page was free"
     return out
 
 
 def latest_decision():
     try:
-        events = requests.get(f"{DEFENDER_URL}/events", timeout=3).json()
+        events = requests.get(f"{DEFENDER_URL}/events", params={"limit": 20}, timeout=3).json()
     except Exception:
         return None
     for e in reversed(events):
-        if e.get("type") in ("allowed", "blocked"):
+        if e.get("type") in ("allowed", "blocked", "paid_unprotected"):
             return {"verdict": e["type"], **e.get("data", {})}
     return None
 
 
-CHECKS = ["price", "drain cap", "payee", "asset", "expiry", "duplicate", "mandate"]
+CHECKS = ["price", "spending cap", "payee", "asset", "expiry", "duplicate", "mandate"]
 
 
 def simulate(attack):
@@ -133,27 +150,46 @@ def finish(run, before, after):
     if before is not None and after is not None:
         run["lost_usd"] = round(sum(after[a] - before[a] for a in before), 6)
     else:
-        run["lost_usd"] = round(sum(p["amount_usd"] for p in run["payments"] if not is_ticktoll(p["payTo"])), 6)
-    run["decision"] = run.get("decision") or latest_decision()
+        run["lost_usd"] = simulated_loss(run["payments"])
+    run["tricked"] = bool(run["payments"]) and not any(is_real_usdc(p.get("asset")) for p in run["payments"])
+    if run.get("payments") and not run.get("decision"):  # only runs that really paid have a fresh decision
+        run["decision"] = latest_decision()
     return run
 
 
-def fire(attack, player=None, custom=None):
+def refill(agent, usd=100):
+    """Local fork only: set the agent's USDC to `usd` and empty the attacker wallets (USDC balances
+    live in storage slot 9). Used by "Reset game"."""
+    w3 = Web3(HTTPProvider(RPC_URL, request_kwargs={"timeout": 3}))
+    for addr, amount in ((agent, usd), (ATTACKER, 0), (LOOKALIKE, 0)):
+        slot = "0x" + Web3.keccak(hexstr=addr[2:].lower().rjust(64, "0") + "9".rjust(64, "0")).hex().removeprefix("0x")
+        value = "0x" + format(int(amount * 1_000_000), "064x")
+        w3.provider.make_request("anvil_setStorageAt", [checksum(USDC_ADDRESS), slot, value])
+
+
+def fire(attack, player=None, custom=None, mode=None):
     if custom:
         url = custom_url(custom)
-        attack = {"id": "custom", "name": "Custom", "url": url, "task": f"Get the ETH coin price from {url}",
+        attack = {"id": "custom", "name": "Custom", "url": url, "task": lure_task(custom.get("lure"), url),
                   "defender_should": "block", "expected_check": None}
-    run = {"attack_id": attack["id"], "player": player, "mode": "mock" if MOCK else RUN_MODE, "simulated": MOCK}
+    mode = mode if mode in ("agent", "direct") else RUN_MODE
+    run = {"attack_id": attack["id"], "player": player, "mode": "mock" if MOCK else mode, "simulated": MOCK}
     if MOCK:
         return finish({**run, **simulate(attack)}, None, None)
     wallets = [ATTACKER, LOOKALIKE]
     before = balances(wallets)
+    run["simulated"] = before is None  # no chain: money moves are simulated
     try:
-        if RUN_MODE == "agent":
+        if mode == "agent":
             res = run_agent(attack["task"])
         else:
             final = attack.get("direct_url", attack["url"])
             res = run_direct(attack["task"], attack["url"], final)
+    except requests.Timeout:
+        res = {"error": "the agent took too long to answer", "failed": True, "payments": []}
+    except requests.ConnectionError:
+        res = {"error": "the agent is not reachable", "failed": True, "payments": []}
     except Exception as e:
-        res = {"error": str(e), "payments": []}
-    return finish({**run, **res}, before, balances(wallets))
+        res = {"error": f"{e.__class__.__name__}: {e}", "failed": True, "payments": []}
+    after = balances(wallets) if before is not None else None
+    return finish({**run, **res}, before, after)

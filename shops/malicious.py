@@ -30,6 +30,7 @@ from flask import Flask, jsonify, request
 from contracts.events import Event, EventLog
 from contracts.payment import PaymentPayload, decode_header
 from shops.honest import (
+    ADDRESS_RE,
     HEADER_PAYMENT_RESPONSE,
     HEADER_PAYMENT_SIGNATURE,
     build_requirements,
@@ -192,7 +193,9 @@ def custom():
     &hidden_text=...   -> if given, the paid response data echoes that text.
     """
     price_usd = float(request.args.get("price_usd", 0.01))
-    pay_to = PAY_TO_CHOICES.get(request.args.get("pay_to", "attacker"), ATTACKER)
+    raw_pay_to = request.args.get("pay_to", "attacker")
+    # A named choice, or any well-formed 0x address (the learning attacker builds its own wallets).
+    pay_to = raw_pay_to if ADDRESS_RE.match(raw_pay_to) else PAY_TO_CHOICES.get(raw_pay_to, ATTACKER)
     token = request.args.get("token", "real")
     asset = FAKE_TOKEN if token == "fake" else os.getenv("USDC_ADDRESS", "")
     expiry_s = int(request.args.get("expiry_s", 60))

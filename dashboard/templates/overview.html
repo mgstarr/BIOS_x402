@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% block title %}Overview{% endblock %}
+{% block body %}
+<div class="page-head">
+  <div class="intro">
+    <span class="label">Overview</span>
+    <h1>An AI agent that pays for data, and a guard that keeps it honest</h1>
+    <p>The agent buys data from web shops with real USDC on a local copy of Base Sepolia.
+       AI can be tricked by a dishonest shop. The guard can't, because it checks every bill
+       against the owner's rules before any signature exists.</p>
+  </div>
+</div>
+
+<div class="flow">
+  <div class="step"><span class="n">1</span><h3>The agent asks</h3>
+    <p>A task such as "price and mood for Ether". The agent picks what to buy.</p></div>
+  <div class="step"><span class="n">2</span><h3>The seller bills</h3>
+    <p>The shop answers HTTP 402 with a bill: amount, wallet, token, time limit.</p></div>
+  <div class="step"><span class="n">3</span><h3>The guard checks</h3>
+    <p>Eight plain rules. One failure and the bill is refused, nothing is signed.</p></div>
+  <div class="step"><span class="n">4</span><h3>Money moves</h3>
+    <p>Only allowed bills are signed and settled on-chain. The shop gets paid.</p></div>
+</div>
+
+<div class="grid cols-3 views">
+  <a class="panel view-link v-provider" href="/provider">
+    <span class="label">View 1</span><h2>Service provider</h2>
+    <p>TickToll, the honest shop: try and buy its data APIs (crypto, weather, shares, currencies, news), see requests and invoices.</p>
+    <div class="figure-line"><div><span class="label">Revenue</span><b id="o-revenue">–</b></div>
+      <div><span class="label">Paid invoices</span><b id="o-paid">–</b></div></div>
+  </a>
+  <a class="panel view-link v-guard" href="/guard">
+    <span class="label">View 2</span><h2>Guard</h2>
+    <p>Blocks with their reasons, the owner's rules, and the AI agent: ask it anything and watch every step, live.</p>
+    <div class="figure-line"><div><span class="label">Checked</span><b id="o-checked">–</b></div>
+      <div><span class="label">Blocked</span><b id="o-blocked">–</b></div></div>
+  </a>
+  <a class="panel view-link v-attack" href="/attacker">
+    <span class="label">View 3</span><h2>Attacker: Rob the Robot</h2>
+    <p>A game for judges: pick a heist, tune it, check it against the guard, launch it, and see what gets through.</p>
+    <div class="figure-line"><div><span class="label">Taken by attackers</span><b id="o-loot">–</b></div>
+      <div><span class="label">AI wallet</span><b id="o-agent">–</b></div></div>
+  </a>
+</div>
+
+<section class="panel" style="margin-top:18px">
+  <div class="panel-head"><h2>Demo in five steps</h2><span class="small muted">Open each view in its own window, side by side.</span></div>
+  <table>
+    <tbody>
+      <tr><td class="time">1</td><td><b>Buy something honestly.</b> On the Service provider page, pick Weather, choose Tokyo,
+        press "See the bill", then "Pay and get the data". An invoice appears; the Guard page shows the bill allowed.</td></tr>
+      <tr><td class="time">2</td><td><b>Ask the agent.</b> On the Guard page, ask "What's the weather in Tokyo and the air quality in Delhi?"
+        and watch every step: catalog search, bills, the guard's checks, the block each payment lands in.</td></tr>
+      <tr><td class="time">3</td><td><b>Play Rob the Robot, round 1.</b> On the Attacker page, set the round to "Guard off", pick
+        The Overcharge, launch. The AI pays you 95 cents, on-chain.</td></tr>
+      <tr><td class="time">4</td><td><b>Round 2.</b> Switch to "Guard on" and launch again. Caught, with the reason (for example
+        "Price is 95x the usual 1¢", or, once trained, "this wallet has received attack money before").
+        Tune the knobs: the recon panel shows which rules would still catch you.</td></tr>
+      <tr><td class="time">5</td><td><b>Run every heist.</b> The intel board fills in: with the guard on, nothing works; with it off,
+        most heists pay out. Honest purchases go through either way.</td></tr>
+      <tr><td class="time">6</td><td><b>Let them learn.</b> In "The attacker that teaches itself", press Train. The attacker invents
+        and tries tactics on its own; the guard learns from each one. Watch the race chart: the attacker's success falls,
+        the guard's accuracy climbs, and the Guard page shows which rules it tightened and which wallets it now refuses.</td></tr>
+    </tbody>
+  </table>
+</section>
+{% endblock %}
+{% block scripts %}
+<script>
+window.onStatus = (s) => {
+  $("o-loot").textContent = s.attacker_usd == null ? "–" : dollars(s.attacker_usd);
+  $("o-agent").textContent = s.agent_usd == null ? "–" : dollars(s.agent_usd);
+};
+async function poll() {
+  const [p, d] = await Promise.all([api("provider"), api("decisions")]);
+  if (!p.error) {
+    $("o-revenue").textContent = dollars(p.revenue_usd);
+    $("o-paid").textContent = p.orders.filter((o) => o.status === "paid").length;
+  }
+  if (!d.error) {
+    $("o-checked").textContent = d.stats.checked || 0;
+    $("o-blocked").textContent = d.stats.blocked || 0;
+  }
+}
+poll();
+setInterval(poll, 3000);
+</script>
+{% endblock %}

@@ -1,0 +1,163 @@
+{% extends "base.html" %}
+{% block title %}Guard{% endblock %}
+{% block body_class %}guard{% endblock %}
+{% block body %}
+<div class="page-head">
+  <div class="intro">
+    <span class="label">Payment guard</span>
+    <h1>Nothing is paid until the guard says yes</h1>
+    <p>Your AI agent decides what to buy. Before its wallet signs anything, the guard checks the bill
+       against your rules. The rules are plain code, so no web page can talk its way past them.</p>
+  </div>
+  <div class="side">
+    <span class="label">Guard</span>
+    <div class="switch" id="switch">
+      <button data-on="true">On</button>
+      <button data-on="false">Off</button>
+    </div>
+  </div>
+</div>
+
+<div class="alert calm" id="alert">
+  <span class="alert-kind">Watching</span>
+  <div><div class="alert-reason">No bills yet</div><div class="alert-sub">Ask your agent something below.</div></div>
+  <span></span>
+</div>
+
+<div class="figures">
+  <div class="figure"><div class="label">Bills checked</div><div class="value" id="f-checked">0</div></div>
+  <div class="figure"><div class="label">Allowed</div><div class="value" id="f-allowed">0</div></div>
+  <div class="figure"><div class="label">Blocked</div><div class="value" id="f-blocked">0</div>
+    <div class="sub" id="f-top"></div></div>
+  <div class="figure"><div class="label">Money kept safe</div><div class="value" id="f-saved">$0.00</div>
+    <div class="sub" id="f-unchecked"></div></div>
+</div>
+
+<div class="grid cols-main">
+  <section class="panel">
+    <div class="panel-head"><h2>Your rules</h2><span class="small muted">The guard never breaks these.</span>
+      <button class="ghost small aside" id="edit">Edit rules</button></div>
+    <div class="panel-body">
+      <ul class="rules-list" id="rules-summary"></ul>
+      <p class="small muted" id="rules-state" style="margin-top:8px"></p>
+    </div>
+
+    <form class="panel-body hidden" id="rules" style="border-top:1px solid var(--line)">
+      <span class="label">Spending</span>
+      <div class="inline-fields" style="margin-top:6px">
+        <div class="field"><span class="small">Most per payment ($)</span><input name="max_per_payment_usd" type="number" step="0.01" min="0.01"></div>
+        <div class="field"><span class="small">Budget per task ($)</span><input name="budget_usd" type="number" step="0.01" min="0.01"></div>
+        <div class="field"><span class="small">Hard cap per bill ($)</span><input name="cap_usd" type="number" step="0.01" min="0.01"></div>
+        <div class="field"><span class="small">Max price vs usual (x)</span><input name="price_multiplier" type="number" step="0.5" min="1"></div>
+        <div class="field"><span class="small">Longest signature (s)</span><input name="max_timeout_s" type="number" step="30" min="10"></div>
+        <div class="field"><span class="small">No repeat payment (s)</span><input name="duplicate_window_s" type="number" step="10" min="1"></div>
+      </div>
+
+      <div style="margin-top:18px"><span class="label">Trusted shops</span></div>
+      <p class="small muted" style="margin:4px 0 8px">A trusted shop may only be paid at its own wallet.</p>
+      <div id="payees"></div>
+      <div class="row" style="margin-top:4px">
+        <button type="button" class="ghost small" id="add-payee">Add shop</button>
+        <label class="row small grow" style="justify-content:flex-end; gap:6px">
+          <input type="checkbox" name="known_shops_only"> Pay trusted shops only
+        </label>
+      </div>
+
+      <div class="field" style="margin-top:18px">
+        <span class="label">Never pay these wallets</span>
+        <textarea name="blocked_wallets" rows="2" placeholder="0x… one per line"></textarea>
+      </div>
+
+      <div style="margin-top:18px"><span class="label">Checks in force</span></div>
+      <div class="rule-checks" id="check-toggles" style="margin-top:8px"></div>
+
+      <div class="row" style="margin-top:18px">
+        <button type="submit">Save rules</button>
+        <button type="button" class="ghost" id="defaults">Restore defaults</button>
+      </div>
+      <p class="error-line" id="rules-error" style="margin-top:8px"></p>
+    </form>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head"><h2>Ask your AI agent</h2>
+      <span class="small muted">Runs on Ollama (qwen2.5) on this laptop. Watch every step below.</span></div>
+    <div class="panel-body">
+      <form class="task-bar" id="task-form">
+        <input class="grow" id="task" placeholder="Ask anything that needs data, e.g. weather in Tokyo">
+        <button type="submit" id="task-go">Ask</button>
+      </form>
+      <div class="examples" id="examples">
+        <button class="chip" type="button">What is the price and market mood for Ether?</button>
+        <button class="chip" type="button">What's the weather in Tokyo and the air quality in Delhi?</button>
+        <button class="chip" type="button">What is Apple's share price and the USD to INR rate?</button>
+        <button class="chip" type="button">Get the ETH coin price from http://localhost:5002/evil/overcharge?symbol=ETH</button>
+        <button class="chip" type="button">Summarise the ETH news from http://localhost:5002/evil/news?symbol=ETH</button>
+      </div>
+      <ol class="timeline" id="timeline"></ol>
+      <div id="answer" class="hidden">
+        <span class="label">Agent's answer</span>
+        <div class="final-answer" id="answer-text"></div>
+      </div>
+    </div>
+  </section>
+</div>
+
+<section class="panel section-gap">
+  <div class="panel-head"><h2>The guard that teaches itself</h2>
+    <span class="small muted">Reinforcement learning against the self-learning attacker. Train it from the Attacker page.</span></div>
+  <div class="panel-body">
+    <div class="grid cols-2" style="align-items:start">
+      <div>
+        <p class="small">Every attack the attacker invents is labelled with the truth by the arena, and the guard
+          replays that bill under each setting of each rule to see which settings would have got it right. It then
+          uses, for each kind of shop, the strictest setting that never blocks an honest shop it has seen.
+          It can only tighten your rules, never loosen them, and wallets that took attack money are refused from then on.</p>
+        <div class="figures" style="grid-template-columns:repeat(4,1fr); margin:14px 0 0">
+          <div class="figure"><div class="label">Bills learned from</div><div class="value" id="b-labelled">0</div></div>
+          <div class="figure"><div class="label">Correct</div><div class="value" id="b-acc">–</div></div>
+          <div class="figure"><div class="label">Honest blocked</div><div class="value" id="b-fb">0</div></div>
+          <div class="figure"><div class="label">Attacks missed</div><div class="value" id="b-missed">0</div></div>
+        </div>
+      </div>
+      <div><span class="label">The race, round by round</span><div id="race" style="margin-top:6px"></div></div>
+    </div>
+    <div class="grid cols-2 section-gap" style="align-items:start">
+      <div>
+        <div class="row" style="margin-bottom:8px">
+          <span class="label grow">What it learned, by kind of shop</span>
+          <div class="seg" id="band-tabs" style="width:auto">
+            <button data-band="new">New shops</button><button data-band="trusted">Trusted</button><button data-band="low">Suspicious</button>
+          </div>
+        </div>
+        <table><thead><tr><th>Rule</th><th>Setting in use</th></tr></thead><tbody id="knobs"></tbody></table>
+        <p class="small muted" style="margin-top:6px">Highlighted = in use now. Crossed out = would block an honest shop the guard has seen.</p>
+      </div>
+      <div>
+        <span class="label">Wallets it learned to refuse</span>
+        <p class="small" id="bad-count" style="margin:6px 0"></p>
+        <div class="mono small muted" id="bad-wallets"></div>
+        <span class="label" style="display:block; margin-top:14px">Shops it knows</span>
+        <table><thead><tr><th>Shop</th><th class="num">Honest</th><th class="num">Attacks</th><th>Treated as</th></tr></thead>
+          <tbody id="trust"></tbody></table>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="panel section-gap">
+  <div class="panel-head">
+    <h2>Every bill, live</h2>
+    <span class="small muted">From the agent, the shop page and the attackers. Click one to see all eight checks.</span>
+    <button class="ghost small aside" id="clear">Clear</button>
+  </div>
+  <div class="decision">
+    <div class="decision-main" style="cursor:default; padding-top:8px; padding-bottom:8px">
+      <span class="label">Time</span><span class="label">The agent wanted</span>
+      <span class="label">The seller billed</span><span class="label" style="text-align:right">Guard</span>
+    </div>
+  </div>
+  <div id="feed"><p class="empty">No bills yet.</p></div>
+</section>
+{% endblock %}
+{% block scripts %}<script src="/static/guard.js"></script>{% endblock %}
