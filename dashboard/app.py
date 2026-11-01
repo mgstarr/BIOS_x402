@@ -1,9 +1,9 @@
 """Dashboard (port 8000): three views of one payment pipeline, plus an overview.
 
   /           Overview: how the pieces connect, with live numbers
-  /provider   TickToll, the service provider: services, incoming requests, invoices
-  /guard      The guard: the owner's rules and every bill it judged, with reasons
-  /attacker   The attacker's console: attacks, how well they work, a custom attack builder
+  /provider   TickToll, the service provider: its APIs (try and buy them), requests, invoices
+  /guard      The guard: blocks with reasons, the owner's rules, and a live run of the AI agent
+  /attacker   "Rob the Robot": the attacker's game, with recon, a workshop and an intel board
 
 The pages only talk to this app. The /api/* routes below forward to the real services, so the
 browser never needs to reach ports 7000-7004 or 5001 itself. Start: python app.py dashboard
@@ -12,35 +12,49 @@ browser never needs to reach ports 7000-7004 or 5001 itself. Start: python app.p
 import os
 import re
 import time
+from urllib.parse import quote
 
 import requests
 from flask import Flask, jsonify, render_template, request
 from web3 import HTTPProvider, Web3
 
 from chain.config import USDC_ABI, USDC_ADDRESS
+from contracts.payment import PAYMENT_REQUIRED, PaymentRequired, decode_header
+from payment import client as wallet
 
 SHOP_URL = os.getenv("SHOP_URL", "http://localhost:5001")
+EVIL_URL = os.getenv("EVIL_URL", "http://localhost:5002")
 AGENT_URL = os.getenv("AGENT_URL", "http://localhost:7000")
 DEFENDER_URL = os.getenv("DEFENDER_URL", "http://localhost:7003")
 ATTACKER_URL = os.getenv("ATTACKER_URL", "http://localhost:7004")
 RPC_URL = os.getenv("RPC_URL", "http://localhost:8545")
 SHOP_WALLET = os.getenv("SHOP_PAY_TO", "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC")
+ATTACKER_WALLET = "0x90F79bf6EB2c4f870365E785982E1f101E93b906"
+LOOKALIKE_WALLET = os.getenv("LOOKALIKE_ADDRESS", "0x3c44cDdd1B2C3D4e5F60718293a4b5c6d74293bC")
+FAKE_TOKEN = "0x1111111111111111111111111111111111111111"
 
-# Plain names for TickToll's products (the shop's /catalog only has paths and descriptions).
+# Plain names for TickToll's products (the shop's /catalog has paths and technical descriptions).
 PRODUCTS = {
-    "/api/price": ("Coin price", "Current price, 24h range, volume and market cap for one coin."),
-    "/api/sentiment": ("Market mood", "How positive or negative people are about a coin over 24 hours."),
-    "/api/report": ("Analyst report", "A short written summary of a coin: key numbers and risks."),
+    "/api/price": ("Coin price", "Live price, 24-hour range, volume and market cap of a cryptocurrency."),
+    "/api/sentiment": ("Market mood", "Are people online feeling positive or negative about a coin today?"),
+    "/api/report": ("Analyst report", "A short expert-style summary of a coin: key numbers, rating and risks."),
+    "/api/weather": ("Weather", "Conditions right now and a three-day forecast for a city."),
+    "/api/temperature": ("Temperature", "How warm it is, how warm it feels, and the next six hours."),
+    "/api/air": ("Air quality", "Is the air safe to breathe? Air quality index and fine dust (PM2.5)."),
+    "/api/stock": ("Share price", "A company's share price today, its day range, volume and size."),
+    "/api/fx": ("Exchange rate", "How much one currency buys in another, and today's change."),
+    "/api/news": ("Headlines", "The top stories right now for one topic."),
     "/compromised/wrong-wallet": ("Coin price, hacked route", ""),
     "/compromised/lookalike": ("Coin price, hacked route", ""),
 }
 
 # TickToll's demo-only hacked routes, and the wallet each one really pays (see shops/server.py).
-HIJACKED_TO = {"/compromised/wrong-wallet": "0x90F79bf6EB2c4f870365E785982E1f101E93b906",
-               "/compromised/lookalike": os.getenv("LOOKALIKE_ADDRESS", "0x3c44cDdd1B2C3D4e5F60718293a4b5c6d74293bC")}
+HIJACKED_TO = {"/compromised/wrong-wallet": ATTACKER_WALLET, "/compromised/lookalike": LOOKALIKE_WALLET}
 
 app = Flask(__name__)
-LAST_SUITE = {}  # the latest full assessment from the attacker engine, per guard setting
+LAST_SUITE = {}  # the latest "test all" from the attacker engine
+HISTORY = []  # every attack launched from the Attacker page: who, what, how, guard, outcome
+RECEIPTS = {}  # on-chain details per transaction hash (they never change once mined)
 
 
 def call(method, url, timeout=5, **kwargs):
@@ -64,13 +78,40 @@ def reply(data, err):
     return (jsonify({"error": err}), 502) if err else jsonify(data)
 
 
+def web3():
+    return Web3(HTTPProvider(RPC_URL, request_kwargs={"timeout": 2}))
+
+
 def usdc_balance(address):
     try:
-        w3 = Web3(HTTPProvider(RPC_URL, request_kwargs={"timeout": 2}))
-        token = w3.eth.contract(address=Web3.to_checksum_address(USDC_ADDRESS), abi=USDC_ABI)
+        token = web3().eth.contract(address=Web3.to_checksum_address(USDC_ADDRESS), abi=USDC_ABI)
         return token.functions.balanceOf(Web3.to_checksum_address(address)).call() / 1_000_000
     except Exception:
         return None
+
+
+def chain_receipt(tx):
+    """Block number, block time, gas and status of a transaction, read from the chain."""
+    if not tx or not str(tx).startswith("0x") or len(tx) != 66:
+        return None
+    if tx not in RECEIPTS:
+        try:
+            w3 = web3()
+            r = w3.eth.get_transaction_receipt(tx)
+            block = w3.eth.get_block(r["blockNumber"])
+            RECEIPTS[tx] = {"block": r["blockNumber"], "block_hash": "0x" + block["hash"].hex().removeprefix("0x"),
+                            "block_time": block["timestamp"], "gas_used": r["gasUsed"],
+                            "success": r["status"] == 1, "tx_in_block": len(block["transactions"])}
+        except Exception:
+            return None
+    latest = None
+    try:
+        latest = web3().eth.block_number
+    except Exception:
+        pass
+    out = dict(RECEIPTS[tx])
+    out["confirmations"] = latest - out["block"] + 1 if latest else None
+    return out
 
 
 # --- pages ---------------------------------------------------------------------------------
@@ -104,29 +145,25 @@ def health():
 
 @app.get("/api/status")
 def status():
-    """Small strip shown on every page: guard on/off, wallets, is everything running."""
+    """Small strip shown on every page: guard on/off and the two wallets."""
     mode, _ = call("GET", f"{DEFENDER_URL}/mode", timeout=2)
-    wallet, _ = call("GET", f"{ATTACKER_URL}/wallet", timeout=4)
+    wallet_now, _ = call("GET", f"{ATTACKER_URL}/wallet", timeout=4)
     return jsonify({"guard": None if mode is None else mode["enabled"],
-                    "agent_usd": (wallet or {}).get("agent"), "attacker_usd": (wallet or {}).get("attacker"),
-                    "simulated": (wallet or {}).get("simulated")})
+                    "agent_usd": (wallet_now or {}).get("agent"), "attacker_usd": (wallet_now or {}).get("attacker"),
+                    "simulated": (wallet_now or {}).get("simulated")})
 
 
-@app.post("/api/agent")
-def run_agent():
-    """Give the AI agent a task. Its payments go through the guard like any other."""
-    task = str((request.get_json(silent=True) or {}).get("task", "")).strip()
-    if not task:
-        return jsonify({"error": "type a task first"}), 400
-    data, err = call("POST", f"{AGENT_URL}/run", timeout=240, json={"task": task})
-    return reply(data, err)
+@app.get("/api/chain/<tx>")
+def chain(tx):
+    receipt = chain_receipt(tx)
+    return jsonify(receipt) if receipt else (jsonify({"error": "not found on the chain"}), 404)
 
 
 # --- service provider ----------------------------------------------------------------------
 
 def coin_of(resource):
-    m = re.search(r"symbol=(\w+)", resource or "")
-    return m.group(1).upper() if m else ""
+    m = re.search(r"[?&]\w+=([^&]+)", resource or "")
+    return m.group(1).replace("%20", " ") if m else ""
 
 
 def orders_from(events):
@@ -156,22 +193,67 @@ def orders_from(events):
     return sorted(orders.values(), key=lambda o: o["ts"], reverse=True)
 
 
-@app.get("/api/provider")
-def provider_data():
+def services():
     catalog, err = call("GET", f"{SHOP_URL}/catalog")
     if err:
+        return None, err
+    return [{**c, "name": PRODUCTS.get(c["path"], (c["path"],))[0],
+             "about": PRODUCTS.get(c["path"], (None, c.get("description")))[1]} for c in catalog], None
+
+
+@app.get("/api/provider")
+def provider_data():
+    items, err = services()
+    if err:
         return reply(None, err)
-    status, _ = call("GET", f"{SHOP_URL}/status")
+    status_now, _ = call("GET", f"{SHOP_URL}/status")
     events, _ = call("GET", f"{SHOP_URL}/events?limit=1000")
-    services = [{"path": c["path"], "price_usd": c["price_usd"],
-                 "name": PRODUCTS.get(c["path"], (c["path"],))[0],
-                 "about": PRODUCTS.get(c["path"], (None, c.get("description")))[1]} for c in catalog]
     orders = orders_from(events or [])
     revenue = round(sum(o["amount_usd"] or 0 for o in orders if o["status"] == "paid"), 6)
-    return jsonify({"services": services, "orders": orders, "revenue_usd": revenue,
-                    "totals": (status or {}).get("totals", {}), "wallet": SHOP_WALLET,
+    return jsonify({"services": items, "orders": orders, "revenue_usd": revenue,
+                    "totals": (status_now or {}).get("totals", {}), "wallet": SHOP_WALLET,
                     "wallet_usd": usdc_balance(SHOP_WALLET),
-                    "mock": (status or {}).get("mock_facilitator", False)})
+                    "mock": (status_now or {}).get("mock_facilitator", False)})
+
+
+def product_url(body):
+    items, err = services()
+    if err:
+        return None, None, err
+    item = next((s for s in items if s["path"] == body.get("path")), None)
+    if not item or body.get("value") not in item["options"]:
+        return None, None, "pick a service and one of its options"
+    return item, f"{SHOP_URL}{item['path']}?{item['param']}={quote(body['value'])}", None
+
+
+@app.post("/api/bill")
+def bill():
+    """Ask for the data WITHOUT paying, and show the 402 bill the shop sends back, in plain words."""
+    item, url, err = product_url(request.get_json(silent=True) or {})
+    if err:
+        return jsonify({"error": err}), 400
+    try:
+        r = requests.get(url, timeout=5)
+        req = decode_header(r.headers[PAYMENT_REQUIRED], PaymentRequired).accepts[0]
+    except Exception as e:
+        return jsonify({"error": f"could not read the bill: {e.__class__.__name__}"}), 502
+    return jsonify({"url": url, "status": r.status_code, "amount_usd": int(req.amount) / 1_000_000,
+                    "amount_units": req.amount, "pay_to": req.payTo, "asset": req.asset,
+                    "network": req.network, "valid_for_s": req.maxTimeoutSeconds,
+                    "description": req.description, "header": r.headers[PAYMENT_REQUIRED][:120]})
+
+
+@app.post("/api/buy")
+def buy():
+    """Pay for the data with the agent's wallet. The bill goes through the guard like any other."""
+    item, url, err = product_url(request.get_json(silent=True) or {})
+    if err:
+        return jsonify({"error": err}), 400
+    task = f"Buy {item['name']} for {request.get_json()['value']} on TickToll's page"
+    out = wallet.pay(url, context={"task": task}, signer_url=DEFENDER_URL, timeout=30)
+    for p in out["payments"]:
+        p["chain"] = chain_receipt(p.get("tx"))
+    return jsonify({"url": url, **out})
 
 
 # --- guard ---------------------------------------------------------------------------------
@@ -191,15 +273,20 @@ def mode():
     return reply(*call("GET", f"{DEFENDER_URL}/mode"))
 
 
+def guard_events():
+    events, err = call("GET", f"{DEFENDER_URL}/events?limit=300")
+    rows = [{"ts": e["ts"], "verdict": e["type"], **e["data"]} for e in (events or [])
+            if e["type"] in ("allowed", "blocked", "paid_unprotected")]
+    return rows, err
+
+
 @app.get("/api/decisions")
 def decisions():
     """Every bill the guard judged, newest first, plus its counters."""
-    events, err = call("GET", f"{DEFENDER_URL}/events?limit=200")
+    rows, err = guard_events()
     if err:
         return reply(None, err)
     stats, _ = call("GET", f"{DEFENDER_URL}/stats")
-    rows = [{"ts": e["ts"], "verdict": e["type"], **e["data"]} for e in events
-            if e["type"] in ("allowed", "blocked", "paid_unprotected")]
     return jsonify({"decisions": rows[::-1], "stats": stats or {}})
 
 
@@ -213,39 +300,104 @@ def clear_decisions():
     return reply(data, err)
 
 
+@app.post("/api/agent")
+def start_agent():
+    """Give the AI agent a task. It runs in the background; follow it on GET /api/agent/<id>."""
+    task = str((request.get_json(silent=True) or {}).get("task", "")).strip()
+    if not task:
+        return jsonify({"error": "type a task first"}), 400
+    return reply(*call("POST", f"{AGENT_URL}/run", timeout=10, json={"task": task, "background": True}))
+
+
+@app.get("/api/agent/<run_id>")
+def follow_agent(run_id):
+    """The run so far, with each bill's guard checks and each payment's block on the chain."""
+    run, err = call("GET", f"{AGENT_URL}/runs/{run_id}")
+    if err:
+        return reply(None, err)
+    rows, _ = guard_events()
+    for s in run["trace"]:
+        if s["step"] == "402":  # the guard's decision on this bill: same URL, just after the bill
+            s["guard"] = next((d for d in rows if (d.get("context") or {}).get("intended_url") == s["url"]
+                               and d["ts"] >= s["ts"] - 1), None)
+        elif s["step"] == "paid":
+            s["chain"] = chain_receipt(s.get("tx"))
+    return jsonify(run)
+
+
 # --- attacker ------------------------------------------------------------------------------
 
 @app.get("/api/attacks")
 def attacks():
-    """The attack list with how often each one worked, guard off vs on (live tries + last assessment)."""
+    """The attack catalogue (without the honest controls)."""
     catalogue, err = call("GET", f"{ATTACKER_URL}/attacks")
     if err:
         return reply(None, err)
-    board, _ = call("GET", f"{ATTACKER_URL}/scoreboard")
-    rows = []
-    for a in catalogue:
-        if a["category"] == "honest":
-            continue
-        tally = {}
-        for guard in ("off", "on"):
-            live = ((board or {}).get("attacks", {}).get(a["id"], {}).get(guard)) or {}
-            tries, wins, lost = live.get("fired", 0), live.get("stolen", 0), live.get("lost_usd", 0.0)
-            for r in LAST_SUITE.get(guard, []):
-                if r["attack_id"] == a["id"]:
-                    tries, wins, lost = tries + 1, wins + (r["outcome"] == "stolen"), lost + r["lost_usd"]
-            tally[guard] = {"tries": tries, "wins": wins, "lost_usd": round(lost, 4)}
-        rows.append({**a, "tally": tally})
-    return jsonify({"attacks": rows, "assessed_at": LAST_SUITE.get("ts")})
+    return jsonify([a for a in catalogue if a["category"] != "honest"])
+
+
+@app.post("/api/recon")
+def recon():
+    """Would the guard catch this bill? Runs its checks without paying anything."""
+    k = request.get_json(silent=True) or {}
+    origin = SHOP_URL if k.get("shop") == "ticktoll" else EVIL_URL
+    path = k.get("path") or "/evil/custom"
+    pay_to = {"attacker": ATTACKER_WALLET, "lookalike": LOOKALIKE_WALLET, "shop": SHOP_WALLET}.get(k.get("pay_to"), ATTACKER_WALLET)
+    try:
+        requirements = {"amount": str(round(float(k.get("price_usd", 0.01)) * 1_000_000)),
+                        "asset": FAKE_TOKEN if k.get("token") == "fake" else USDC_ADDRESS,
+                        "payTo": pay_to, "maxTimeoutSeconds": int(k.get("expiry_s", 60)),
+                        "resource": f"{origin}{path}?symbol=ETH", "description": "recon"}
+    except (TypeError, ValueError):
+        return jsonify({"error": "price and lifetime must be numbers"}), 400
+    url = f"{origin}{path}?symbol=ETH"
+    body = {"requirements": requirements,
+            "context": {"task": "recon", "intended_url": k.get("intended_url") or url, "final_url": url}}
+    return reply(*call("POST", f"{DEFENDER_URL}/preview", json=body))
 
 
 @app.post("/api/fire")
 def fire():
     body = request.get_json(silent=True) or {}
-    payload = {k: body[k] for k in ("attack_id", "custom", "mode", "player") if body.get(k) is not None}
+    payload = {k: body[k] for k in ("attack_id", "custom", "mode", "player", "lure") if body.get(k)}
     data, err = call("POST", f"{ATTACKER_URL}/fire", timeout=240, json=payload)
-    if data:
-        data.pop("run", None)
-    return reply(data, err)
+    if err:
+        return reply(None, err)
+    run = data.pop("run", {}) or {}
+    data["chain"] = chain_receipt(data.get("tx"))
+    data["mode"] = run.get("mode") or body.get("mode")
+    data["agent_answer"] = run.get("answer")
+    HISTORY.append({"ts": time.time(), "player": (body.get("player") or "anonymous")[:24],
+                    "attack_id": data.get("attack_id"), "custom": bool(body.get("custom")),
+                    "mode": data["mode"], "guard": data.get("guard"), "outcome": data.get("outcome"),
+                    "lost_usd": data.get("lost_usd") or 0})
+    return jsonify(data)
+
+
+@app.get("/api/intel")
+def intel():
+    """How well each attack worked, by route (AI agent or direct) and guard setting, plus a leaderboard."""
+    tries = [*HISTORY]
+    for guard, results in (("on", LAST_SUITE.get("on", [])), ("off", LAST_SUITE.get("off", []))):
+        tries += [{"attack_id": r["attack_id"], "mode": "direct", "guard": guard, "outcome": r["outcome"],
+                   "lost_usd": r["lost_usd"], "player": None} for r in results]
+    matrix = {}
+    for t in tries:
+        cell = matrix.setdefault(t["attack_id"], {}).setdefault(f"{t['mode']}-{t['guard']}",
+                                                                {"tries": 0, "wins": 0, "lost_usd": 0.0})
+        cell["tries"] += 1
+        cell["wins"] += t["outcome"] == "stolen"
+        cell["lost_usd"] = round(cell["lost_usd"] + t["lost_usd"], 4)
+    board = {}
+    for t in HISTORY:
+        row = board.setdefault(t["player"], {"player": t["player"], "heists": 0, "wins": 0,
+                                             "loot_off": 0.0, "loot_on": 0.0})
+        row["heists"] += 1
+        row["wins"] += t["outcome"] == "stolen"
+        row["loot_on" if t["guard"] == "on" else "loot_off"] += t["lost_usd"]
+    leaders = sorted(board.values(), key=lambda r: (r["loot_on"], r["loot_off"], r["wins"]), reverse=True)
+    return jsonify({"matrix": matrix, "leaders": leaders, "assessed_at": LAST_SUITE.get("ts"),
+                    "recent": HISTORY[-8:][::-1]})
 
 
 @app.post("/api/assess")

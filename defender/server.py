@@ -159,6 +159,27 @@ def sign():
     return jsonify(result), status
 
 
+@app.post("/preview")
+def preview():
+    """Run the checks on a bill WITHOUT signing, recording or counting it (the attacker's recon)."""
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict) or "requirements" not in body:
+        return bad_request('body must be JSON like {"requirements": {...}, "context": {...}}')
+    try:
+        req = PaymentRequirements.model_validate(body["requirements"])
+    except ValidationError as exc:
+        err = exc.errors()[0]
+        return bad_request(f"invalid requirements: {err['loc']} {err['msg']}")
+    context = body.get("context") or {}
+    price = catalog.reference_price(policy.shop_origin(req, context), policy.path_of(req.resource))
+    with lock:
+        decision = policy.evaluate(req, context, ledger, payees, price)
+    head = decision["headline"]
+    return jsonify({"guard_enabled": STATE["enabled"], "would_block": bool(decision["failed"]),
+                    "check": head["id"] if head else None, "reason": head["reason"] if head else "all checks passed",
+                    "checks": decision["checks"], "amount_usd": decision["amount_usd"]})
+
+
 @app.route("/mode", methods=["GET", "POST"])
 def mode():
     if request.method == "POST":

@@ -19,9 +19,9 @@ Open **http://localhost:8000**. It has three views, each meant for its own windo
 
 | View | URL | What it shows |
 | --- | --- | --- |
-| Service provider | `/provider` | TickToll's services and prices, incoming requests, an invoice per payment |
-| Guard | `/guard` | The owner's rules (editable), the on/off switch, every bill with its verdict and reasons |
-| Attacker | `/attacker` | Known attacks and how often they work, a custom attack builder, live payments |
+| Service provider | `/provider` | TickToll's shop: 9 data APIs (crypto, weather, temperature, air, shares, currencies, news) to try and buy, incoming requests, an invoice per payment |
+| Guard (blue) | `/guard` | The latest block and its reason, the owner's rules (editable), and the AI agent: ask it anything and watch every step live, down to the block each payment lands in |
+| Attacker (red) | `/attacker` | "Rob the Robot", a game for judges: pick a heist, tune it, see which rules would catch it (recon), launch it, and read the intel board |
 
 `bash start_all.sh stop` stops everything. Ollama must be running with `qwen2.5:7b` for the
 agent; attacks can also be sent "directly to the wallet", which skips the AI.

@@ -87,6 +87,8 @@ def fire():
     attack = get(body.get("attack_id"))
     if not attack:
         return jsonify({"error": "unknown attack_id", "known": [a["id"] for a in ATTACKS]}), 400
+    if body.get("lure"):  # the player rewrote the message that lures the AI
+        attack = {**attack, "task": runner.lure_task(body["lure"], attack["url"])}
     return jsonify(fire_one(attack, player, mode=mode))
 
 

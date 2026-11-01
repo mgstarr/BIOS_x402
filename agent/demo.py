@@ -24,6 +24,10 @@ def describe(s):
         return s["text"]
     if kind == "tool":
         return f"{s['name']}({', '.join(map(str, s['args'].values()))})"
+    if kind == "request":
+        return f"GET {s['url']}"
+    if kind == "thinking":
+        return "asking the model"
     if kind == "402":
         return f"shop asks ${s['amount_usd']:.2f} -> {short(s['payTo'])}"
     if kind == "signed":

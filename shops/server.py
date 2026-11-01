@@ -58,21 +58,46 @@ PRODUCTS = {
     "/api/price": (0.01, "Market price snapshot for one symbol"),
     "/api/sentiment": (0.02, "Social sentiment score and topics for one symbol (24h)"),
     "/api/report": (0.05, "Analyst-style report: summary, key levels, metrics, risks"),
+    "/api/weather": (0.01, "Current weather and a 3-day forecast for one city"),
+    "/api/temperature": (0.005, "Temperature now, feels-like, and the next 6 hours for one city"),
+    "/api/air": (0.01, "Air quality index and PM2.5 for one city"),
+    "/api/stock": (0.02, "Share price, day range, volume and market cap for one company"),
+    "/api/fx": (0.01, "Exchange rate for one currency pair"),
+    "/api/news": (0.03, "Top headlines for one topic"),
+}
+
+# What each product needs in its query string, the allowed values, and its shelf in the shop.
+PARAMS = {
+    "/api/price": ("symbol", "prices", "Crypto"),
+    "/api/sentiment": ("symbol", "sentiment", "Crypto"),
+    "/api/report": ("symbol", "reports", "Crypto"),
+    "/api/weather": ("city", "weather", "Weather"),
+    "/api/temperature": ("city", "weather", "Weather"),
+    "/api/air": ("city", "weather", "Weather"),
+    "/api/stock": ("ticker", "stocks", "Shares"),
+    "/api/fx": ("pair", "fx", "Currencies"),
+    "/api/news": ("topic", "news", "News"),
 }
 
 
 def catalog_items() -> list[dict]:
-    """The menu as a list of dicts. Used by GET /catalog AND by the website's pricing cards."""
+    """The menu as a list of dicts. Used by GET /catalog (buyers, the guard and the dashboard)."""
     base = request.host_url.rstrip("/")
-    return [
-        {
+    items = []
+    for path, (price_usd, description) in PRODUCTS.items():
+        param, table, category = PARAMS[path]
+        options = sorted(MARKET_DATA[table])
+        example = "ETH" if "ETH" in options else options[0]
+        items.append({
             "path": path,
             "description": description,
             "price_usd": price_usd,
-            "example_url": f"{base}{path}?symbol=ETH",
-        }
-        for path, (price_usd, description) in PRODUCTS.items()
-    ]
+            "category": category,
+            "param": param,
+            "options": options,
+            "example_url": f"{base}{path}?{param}={example.replace(' ', '%20')}",
+        })
+    return items
 
 
 @app.get("/catalog")
@@ -141,6 +166,44 @@ def sentiment():
 def report():
     symbol = request.args["symbol"].upper()
     return jsonify({**MARKET_DATA["reports"][symbol], "as_of": MARKET_DATA["as_of"]})
+
+
+def lookup(table: str, param: str):
+    """The row for ?<param>=<value> (any letter case), or a 404 listing what we have."""
+    wanted = request.args.get(param, "").strip().lower()
+    for key, row in MARKET_DATA[table].items():
+        if key.lower() == wanted:
+            return row
+    return None
+
+
+def data_product(path: str):
+    """Register one of the newer data products: check the parameter, bill, then answer."""
+    param, table, _category = PARAMS[path]
+
+    def view():
+        row = lookup(table, param)
+        if path == "/api/temperature":
+            row = {k: row[k] for k in ("city", "country", "temp_c", "feels_like_c", "hourly_c")}
+        elif path == "/api/air":
+            row = {"city": row["city"], "country": row["country"], "aqi": row["aqi"], "pm25": row["pm25"],
+                   "level": "good" if row["aqi"] <= 50 else "moderate" if row["aqi"] <= 100 else "unhealthy"}
+        return jsonify({**row, "as_of": MARKET_DATA["as_of"]})
+
+    def check_param(inner):
+        @wraps(inner)
+        def wrapper():  # unknown value -> 404 BEFORE billing, so nobody pays for nothing
+            if lookup(table, param) is None:
+                return jsonify({"error": f"unknown_{param}", "supported": sorted(MARKET_DATA[table])}), 404
+            return inner()
+        return wrapper
+
+    view.__name__ = "product_" + path.rsplit("/", 1)[-1]
+    app.get(path)(check_param(paid_product(path)(view)))
+
+
+for _path in ("/api/weather", "/api/temperature", "/api/air", "/api/stock", "/api/fx", "/api/news"):
+    data_product(_path)
 
 
 # --- COMPROMISE DEMO (demo-only, NOT shown on the TickToll website) ----------------------
