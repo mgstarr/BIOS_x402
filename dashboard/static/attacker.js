@@ -381,6 +381,7 @@ async function loadLearning() {
     : t.running ? `Training: round ${t.round} of ${t.rounds}, ${t.done} heists played…`
     : t.rounds_log.length ? `Last run: ${t.rounds_log.length} rounds. Chain rolled back: ${t.reverted ? "yes, the wallet is untouched" : "no"}.`
     : "Not trained yet in this session. What both sides learned before is kept on disk.";
+  raceSummary($("race-summary"), t.rounds_log);
   lineChart($("race"), t.rounds_log.map((m) => m.round), raceSeries(t.rounds_log));
 
   const fams = Object.entries(d.red.families).sort((a, b) => b[1].mean - a[1].mean);

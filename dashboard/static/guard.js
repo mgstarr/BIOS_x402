@@ -375,6 +375,7 @@ async function loadLearned() {
   $("b-fb").textContent = c.false_blocks;
   $("b-missed").textContent = c.missed;
   const rounds = d.training.rounds_log;
+  raceSummary($("race-summary"), rounds);
   lineChart($("race"), rounds.map((m) => m.round), [
     { name: "Attacker got paid", cls: "attack", values: rounds.map((m) => m.attacker_success_rate) },
     { name: "Guard correct", cls: "guard", values: rounds.map((m) => m.guard_accuracy) },

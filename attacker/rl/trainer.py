@@ -29,6 +29,9 @@ from contracts.payment import (
 )
 
 DISCOVERIES = Path(os.getenv("DISCOVERIES_FILE", Path(__file__).resolve().parents[2] / "tests" / "regression" / "discoveries.json"))
+# Only the round-by-round history survives a restart (not a live run, which can't resume anyway):
+# this is the "before vs after" story of a demo, so it must not vanish just because a service restarted.
+TRAINING_LOG = Path(os.getenv("TRAINING_LOG", Path(__file__).resolve().parents[1] / "training_log.json"))
 HONEST_IDS = [a["id"] for a in ATTACKS if a["defender_should"] == "allow"]
 TIMEOUT = 20
 red = RedLearner()
@@ -43,7 +46,24 @@ def fresh_status() -> dict:
             "rounds_log": [], "recent": [], "started": None, "snapshot": None, "reverted": None}
 
 
+def load_rounds_log() -> list:
+    try:
+        return json.loads(TRAINING_LOG.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+
+
+def save_rounds_log() -> None:
+    try:
+        tmp = TRAINING_LOG.with_suffix(".tmp")
+        tmp.write_text(json.dumps(STATUS["rounds_log"]), encoding="utf-8")
+        tmp.replace(TRAINING_LOG)
+    except OSError:
+        pass
+
+
 STATUS.update(fresh_status())
+STATUS["rounds_log"] = load_rounds_log()
 
 
 # --- plumbing --------------------------------------------------------------------------
@@ -243,6 +263,7 @@ def run_training(rounds: int, heists: int) -> None:
             m["blue_live"] = blue_live()
             with _lock:
                 STATUS["rounds_log"].append(m)
+            save_rounds_log()
     except Exception as e:  # noqa: BLE001
         with _lock:
             STATUS["error"] = f"{e.__class__.__name__}: {e}"
@@ -281,6 +302,7 @@ def reset_all() -> None:
     red.reset()
     with _lock:
         STATUS.update(fresh_status())
+    save_rounds_log()
     if token():
         try:
             arena("POST", "/learning/reset")
