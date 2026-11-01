@@ -1,0 +1,109 @@
+/* "Rob the Robot" as a screen-by-screen game. Loaded only by the attacker page; reuses the
+   attack theme from style.css (dark red, gold) and just changes layout, size and flow. */
+
+html { font-size: 16px; }               /* projector-friendly: everything is rem-based */
+body.game main { max-width: 1400px; padding-top: 0; }
+
+/* --- HUD + menu, pinned at the top ------------------------------------------------------- */
+.game-top { position: sticky; top: 0; z-index: 20; background: var(--paper); padding-top: 14px; margin-bottom: 22px; }
+.game-top .figures { margin-bottom: 0; background: var(--card); }
+.game-top .figure { padding: 10px 18px; }
+.game-top .figure .value { font-size: 1.7rem; }
+.game-top .seg button { padding: 8px 10px; font-size: 1rem; }
+.game-top .seg button[data-guard="true"].on { background: var(--gold); color: #1c0b0a; }
+body.no-hud .game-top { display: none; }
+
+.game-menu { display: flex; gap: 4px; border-bottom: 1px solid var(--line); background: var(--paper); }
+.game-menu a { padding: 10px 22px; font-size: 1.15rem; font-weight: 700; text-decoration: none; color: var(--muted);
+  border-bottom: 3px solid transparent; letter-spacing: 0.03em; text-transform: uppercase; }
+.game-menu a:hover { color: var(--ink); }
+.game-menu a.on { color: var(--gold); border-bottom-color: var(--gold); }
+.game-menu .menu-quit { margin-left: auto; font-size: 0.9rem; align-self: center; }
+
+/* --- screens and transitions ------------------------------------------------------------- */
+.screen { display: none; }
+.screen.show { display: block; animation: screen-in 0.38s cubic-bezier(.2,.7,.3,1) both; }
+.screen.show.from-left { animation-name: screen-in-left; }
+@keyframes screen-in { from { opacity: 0; transform: translateX(40px); } to { opacity: 1; transform: none; } }
+@keyframes screen-in-left { from { opacity: 0; transform: translateX(-40px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .screen.show { animation: none; } }
+
+.screen-head { display: flex; align-items: center; gap: 18px; margin-bottom: 18px; flex-wrap: wrap; }
+.screen-head h1 { font-size: 2.2rem; letter-spacing: 0.01em; }
+.screen-head .muted { font-size: 1.1rem; }
+
+button.huge, .btn.huge { padding: 18px 44px; font-size: 1.5rem; font-weight: 800; letter-spacing: 0.06em; }
+.btn { display: inline-block; text-decoration: none; border-radius: var(--radius); border: 1px solid var(--brand);
+  padding: 8px 16px; font-weight: 600; text-align: center; }
+body.attack a.btn.gold { background: var(--gold); border-color: var(--gold); color: #1c0b0a; }
+body.attack a.btn.gold:hover { filter: brightness(1.08); }
+body.attack a.btn.ghost { background: transparent; border-color: var(--line); color: var(--ink); }
+body.attack a.btn.ghost:hover { border-color: var(--gold); color: var(--gold); }
+
+/* --- 1. challenge card ------------------------------------------------------------------- */
+.screen[data-screen="challenge"].show { display: flex; min-height: calc(100vh - 120px); align-items: center; justify-content: center; }
+.challenge-card { border: 2px solid var(--gold); border-radius: 10px; background: var(--card); color: var(--ink);
+  padding: 46px 56px; max-width: 900px; width: 100%; text-align: center; display: grid; gap: 18px; justify-items: center;
+  margin: 0; }
+.challenge-card .title { font-size: 4rem; letter-spacing: 0.02em; line-height: 1.05; }
+.challenge-card .title span { color: var(--gold); }
+.challenge-card .intro { color: var(--muted); font-size: 1.15rem; max-width: 680px; }
+.challenge-card .dare { font-size: 2rem; font-weight: 800; color: var(--gold); text-transform: uppercase; letter-spacing: 0.03em;
+  border-top: 1px dashed var(--gold); border-bottom: 1px dashed var(--gold); padding: 14px 0; width: 100%; }
+.challenge-card .dare-state { font-size: 1.3rem; font-weight: 700; color: var(--bad); }
+.challenge-card.won .dare-state { color: var(--gold); }
+.challenge-card.won { background: var(--gold-soft); }
+.challenge-card .player { display: grid; gap: 6px; justify-items: center; }
+.challenge-card .player input { font-size: 1.5rem; padding: 10px 16px; text-align: center; width: 340px; }
+.challenge-card .rank { font-size: 1.1rem; }
+#accept { margin-top: 6px; animation: dare-pulse 1.6s ease-in-out infinite; }
+@keyframes dare-pulse { 50% { filter: brightness(1.18); transform: scale(1.03); } }
+
+/* --- 3. heist grid ----------------------------------------------------------------------- */
+.screen .heists { grid-template-columns: repeat(4, 1fr); gap: 16px; padding: 0; }
+@media (max-width: 1100px) { .screen .heists { grid-template-columns: repeat(2, 1fr); } }
+.screen .heist { padding: 20px; min-height: 190px; display: flex; flex-direction: column; gap: 8px; transition: transform 0.15s; }
+.screen .heist:hover { transform: translateY(-3px); }
+.screen .heist .h-name { font-size: 1.45rem; }
+.screen .heist .h-way { font-size: 0.85rem; }
+.screen .heist .h-plan { font-size: 1.02rem; flex: 1; }
+.screen .heist .h-foot { font-size: 0.95rem; align-items: center; }
+.badge { padding: 3px 10px; border-radius: 99px; font-weight: 700; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.05em; }
+.badge.l1 { background: var(--ok-soft); color: var(--ok); }
+.badge.l2 { background: var(--warn-soft); color: var(--warn); }
+.badge.l3 { background: var(--bad-soft); color: var(--bad); }
+.h-state.worked { color: var(--gold); font-weight: 700; }
+.h-state.failed { color: var(--bad); }
+.heist.worked { border-color: var(--gold); }
+
+/* --- 4. tune + recon --------------------------------------------------------------------- */
+.workshop .knob { grid-template-columns: 180px 1fr 120px; }
+.workshop .knob .k-label span { font-size: 0.85rem; }
+.radar { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+.radar div { padding: 12px 14px; font-size: 1.05rem; font-weight: 600; transition: background 0.25s, color 0.25s, border-color 0.25s; }
+.radar div.clear { border-color: var(--ok); background: var(--ok-soft); }
+.odds .big { font-size: 1.35rem; }
+.recon-reason { margin-top: 12px; font-size: 1.05rem; }
+.launch-row { display: flex; justify-content: center; margin: 26px 0 10px; }
+#launch { min-width: 420px; font-size: 2rem; }
+
+/* --- 5. result --------------------------------------------------------------------------- */
+.big-path .stage { font-size: 1rem; padding: 16px 12px 8px 0; border-top-width: 8px; opacity: 0.45;
+  transition: opacity 0.3s, border-color 0.3s; }
+.big-path .stage b { font-size: 1.3rem; }
+.big-path .stage.done, .big-path .stage.active, .big-path .stage.stop, .big-path .stage.win { opacity: 1; }
+.big-path .stage.stop, .big-path .stage.win { animation: stage-pop 0.4s ease-out; }
+@keyframes stage-pop { from { transform: scale(0.9); } to { transform: none; } }
+.verdict-banner { margin-top: 28px; padding: 30px 34px; text-align: center; border-width: 2px; animation: banner-in 0.5s cubic-bezier(.2,.8,.3,1.2) both; }
+.verdict-banner .vb-title { font-size: 3rem; line-height: 1.1; text-transform: uppercase; letter-spacing: 0.02em; }
+.verdict-banner .vb-detail { font-size: 1.25rem; margin-top: 10px; }
+.verdict-banner .vb-loot { font-size: 4.5rem; font-weight: 800; color: var(--gold); font-variant-numeric: tabular-nums; }
+@keyframes banner-in { from { opacity: 0; transform: scale(0.85); } to { opacity: 1; transform: none; } }
+.result-actions { display: flex; gap: 18px; justify-content: center; margin-top: 28px; }
+.result-actions.hidden { visibility: hidden; }
+
+/* --- leaderboard, training, intel -------------------------------------------------------- */
+.board th, .board td { font-size: 1.3rem; padding: 14px 20px; }
+.board tr:first-child td { color: var(--gold); font-weight: 700; }
+.screen table th, .screen table td { font-size: 1rem; }
+.screen .intel td, .screen .intel th { font-size: 1.05rem; }

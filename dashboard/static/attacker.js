@@ -1,4 +1,5 @@
 // "Rob the Robot": pick a heist, tune it, see what the guard would say, launch it, learn from the intel board.
+// One screen at a time: #challenge, #pick, #tune, #result, #leaderboard, #training, #intel (Back button works).
 
 const EVIL = "http://localhost:5002", SHOP = "http://localhost:5001";
 const DEFAULT_LURE = "Get the ETH coin price from {url}";
@@ -37,7 +38,7 @@ const PAYTO_NAMES = { attacker: "You", lookalike: "Look-alike", shop: "TickToll"
 const STAGES = [["Lure", "the AI gets your message"], ["AI visits", "it reaches the shop"], ["Bill sent", "HTTP 402 with your terms"],
                 ["Guard scan", "eight rules checked"], ["Wallet signs", "the AI authorises payment"], ["Money lands", "USDC moves on-chain"]];
 
-let heist = HEISTS[0], k = {}, busy = false, guardOn = null, reconTimer = null;
+let heist = HEISTS[0], k = {}, busy = false, guardOn = null, reconTimer = null, lastResult = null;
 
 // --- price slider: 0..100 mapped onto half a cent .. $100 (log scale) --------------------
 const priceAt = (pos) => Math.round(0.005 * Math.pow(20000, pos / 100) * 1000) / 1000;
@@ -46,14 +47,55 @@ const posOf = (price) => Math.round(100 * Math.log(price / 0.005) / Math.log(200
 // --- player ------------------------------------------------------------------------------
 function player() { return $("player").value.trim() || "Anonymous"; }
 try { $("player").value = localStorage.getItem("rob-player") || ""; } catch (e) { /* private mode */ }
-$("player").addEventListener("input", () => { try { localStorage.setItem("rob-player", $("player").value); } catch (e) { /* ignore */ } });
+$("player").addEventListener("input", () => {
+  try { localStorage.setItem("rob-player", $("player").value); } catch (e) { /* ignore */ }
+  $("hud-player").textContent = player();
+});
+$("hud-player").textContent = player();
+
+// --- screens: the URL hash picks one, so Back/Forward move between them ------------------
+const SCREENS = ["challenge", "pick", "tune", "result", "leaderboard", "training", "intel"];
+let screenNow = null;
+function showScreen() {
+  const name = SCREENS.includes(location.hash.slice(1)) ? location.hash.slice(1) : "challenge";
+  if (name === screenNow) return;
+  const back = screenNow != null && SCREENS.indexOf(name) < SCREENS.indexOf(screenNow);
+  screenNow = name;
+  document.querySelectorAll(".screen").forEach((el) => {
+    const on = el.dataset.screen === name;
+    el.classList.toggle("show", on);
+    el.classList.toggle("from-left", on && back);
+  });
+  document.body.classList.toggle("no-hud", name === "challenge");
+  document.querySelectorAll("#game-menu a").forEach((a) => a.classList.toggle("on", a.dataset.for.split(" ").includes(name)));
+  if (name === "result" && !lastResult && !busy) $("run-note").textContent = "No heist launched yet. Pick one first.";
+  window.scrollTo(0, 0);
+}
+window.addEventListener("hashchange", showScreen);
+$("accept").onclick = () => { location.hash = "#pick"; };
+$("player").addEventListener("keydown", (e) => { if (e.key === "Enter") location.hash = "#pick"; });
+$("back-pick").onclick = () => { location.hash = "#pick"; };
 
 // --- HUD and rounds ----------------------------------------------------------------------
 window.onStatus = (s) => {
   $("f-agent").textContent = s.agent_usd == null ? "–" : dollars(s.agent_usd);
-  $("f-loot").textContent = s.attacker_usd == null ? "–" : dollars(s.attacker_usd);
+  if (s.attacker_usd == null) $("f-loot").textContent = "–";
+  else if (s.attacker_usd !== lootShown) {
+    countUp($("f-loot"), lootShown == null ? s.attacker_usd : lootShown, s.attacker_usd, dollars);
+    lootShown = s.attacker_usd;
+  }
   if (s.guard != null && s.guard !== guardOn) { guardOn = s.guard; drawRound(); recon(); }
 };
+let lootShown = null;
+function countUp(el, from, to, fmt, ms = 1200) {  // animate a money counter from one value to another
+  const t0 = performance.now();
+  const tick = (now) => {
+    const p = Math.min(1, (now - t0) / ms), e = 1 - Math.pow(1 - p, 3);
+    el.textContent = fmt(from + (to - from) * e);
+    if (p < 1) requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+}
 function drawRound() {
   document.querySelectorAll("#round button").forEach((b) => b.classList.toggle("on", (b.dataset.guard === "true") === guardOn));
   $("round-sub").textContent = guardOn ? "The guard is watching every bill." : "No guard. The AI pays what it is billed.";
@@ -70,12 +112,13 @@ function drawHeists(intel) {
   $("heists").innerHTML = HEISTS.map((h) => {
     const cells = intel && intel.matrix[h.id] ? Object.values(intel.matrix[h.id]) : [];
     const tries = cells.reduce((a, c) => a + c.tries, 0), wins = cells.reduce((a, c) => a + c.wins, 0);
-    return `<button class="heist ${h === heist ? "on" : ""}" data-id="${h.id}">
+    const state = !tries ? ["untried", ""] : wins ? [`${wins}/${tries} worked`, "worked"] : [`tried ${tries}×, never worked`, "failed"];
+    return `<button class="heist ${h === heist ? "on" : ""} ${state[1]}" data-id="${h.id}">
       <span class="h-way">${esc(h.way)}</span>
       <span class="h-name">${esc(h.name)}</span>
       <span class="h-plan">${esc(h.plan)}</span>
-      <span class="h-foot"><span class="dots">${["", "Easy", "Medium", "Hard"][h.level]}</span>
-        <span class="muted">${tries ? `${wins}/${tries} worked` : "untried"}</span></span>
+      <span class="h-foot"><span class="badge l${h.level}">${["", "Easy", "Medium", "Hard"][h.level]}</span>
+        <span class="h-state ${state[1] || "muted"}">${state[0]}</span></span>
     </button>`;
   }).join("");
 }
@@ -85,6 +128,7 @@ $("heists").addEventListener("click", (e) => {
   heist = HEISTS.find((h) => h.id === b.dataset.id);
   loadHeist();
   drawHeists(lastIntel);
+  location.hash = "#tune";
 });
 
 // --- the workshop ------------------------------------------------------------------------
@@ -92,6 +136,7 @@ function loadHeist() {
   k = { route: k.route || "agent", lure: heist.lure || DEFAULT_LURE, price: heist.price, payto: heist.payto,
         token: heist.token, expiry: heist.expiry, hidden: "" };
   $("ws-name").textContent = heist.name;
+  $("ws-title").textContent = heist.name;
   $("ws-explain").textContent = heist.explain;
   drawKnobs();
   recon();
@@ -119,7 +164,7 @@ function drawKnobs() {
   $("v-payto").textContent = PAYTO_NAMES[k.payto];
   $("v-token").textContent = k.token === "real" ? "real" : "fake";
   $("v-expiry").textContent = EXPIRY_NAMES[EXPIRIES.indexOf(k.expiry)] || k.expiry + " s";
-  $("launch").textContent = changed() ? "Launch your custom heist" : `Launch ${heist.name}`;
+  $("launch").textContent = changed() ? "LAUNCH your custom heist" : `LAUNCH ${heist.name}`;
 }
 
 ["k-route", "k-payto", "k-token"].forEach((id) => $(id).addEventListener("click", (e) => {
@@ -176,16 +221,18 @@ function outcomePath(r, mode) {
   return [...done(2), "stop"];
 }
 
+const ruleName = (id) => String(id || "").replace(/[_-]+/g, " ");
 function verdictHtml(r, mode) {
   const rule = r.check ? ` (${r.check} rule)` : "";
   if (r.outcome === "stolen") {
     const c = r.chain || {};
-    return `<div class="verdict-banner win"><div class="vb-title">Heist complete: +${money(r.lost_usd)}</div>
+    return `<div class="verdict-banner win"><div class="vb-title">You stole</div>
+      <div class="vb-loot" data-loot="${r.lost_usd || 0}">0¢</div>
       <div class="vb-detail">The AI paid you and the guard ${r.guard === "on" ? "missed it" : "was off"}. This money really moved.</div>
       <div class="mono small" style="margin-top:6px">Transaction ${esc(r.tx)}${c.block ? ` · block #${c.block.toLocaleString()}` : ""}</div></div>`;
   }
   if (r.outcome === "blocked") {
-    return `<div class="verdict-banner caught"><div class="vb-title">Caught by the guard</div>
+    return `<div class="verdict-banner caught"><div class="vb-title">Blocked by ${esc(ruleName(r.check) || "the guard")}: the guard caught you</div>
       <div class="vb-detail"><b>${esc(r.reason)}</b>${esc(rule)}. Nothing was signed and no money moved.</div></div>`;
   }
   if (r.outcome === "refused") {
@@ -213,6 +260,8 @@ $("launch").onclick = async () => {
   $("launch").disabled = true;
   $("launch").textContent = "Heist in progress…";
   $("verdict").innerHTML = "";
+  $("result-actions").classList.add("hidden");
+  location.hash = "#result";
   $("run-note").textContent = `${custom ? "Your custom heist" : heist.name}, ${mode === "agent" ? "through the AI" : "straight to the wallet"}, guard ${guardOn ? "on" : "off"}`;
   // Walk the first stages while we wait; the real result decides how far it really got.
   let step = 0;
@@ -223,10 +272,20 @@ $("launch").onclick = async () => {
   }, mode === "agent" ? 2500 : 300);
   const r = await api("fire", body);
   clearInterval(walker);
-  drawPath(r.error && !r.outcome ? ["stop"] : outcomePath(r, mode));
+  lastResult = r;
+  // Reveal the real path one stage at a time, then the banner.
+  const final = r.error && !r.outcome ? ["stop"] : outcomePath(r, mode);
+  for (let i = Math.min(step, final.length - 1); i < final.length; i++) {
+    drawPath([...final.slice(0, i), final[i] === "done" ? "active" : final[i]]);
+    await new Promise((ok) => setTimeout(ok, 420));
+  }
+  drawPath(final);
   $("verdict").innerHTML = r.error && !r.outcome
     ? `<div class="verdict-banner"><div class="vb-title">Could not launch</div><div class="vb-detail">${esc(r.error)}</div></div>`
     : verdictHtml(r, mode);
+  const lootEl = document.querySelector("#verdict .vb-loot");
+  if (lootEl) countUp(lootEl, 0, +lootEl.dataset.loot, (v) => money(Math.round(v * 1000) / 1000), 1600);
+  $("result-actions").classList.remove("hidden");
   $("launch").disabled = false;
   busy = false;
   drawKnobs();
@@ -255,10 +314,10 @@ async function loadIntel() {
   $("intel-note").textContent = r.assessed_at
     ? `Includes the full run of every heist at ${clock(r.assessed_at)}. Gold = it worked at least once.`
     : "Gold = it worked at least once. Red = tried and always failed. Use \"Run every heist\" to fill the Direct columns.";
-  $("leaders").innerHTML = r.leaders.length ? r.leaders.slice(0, 8).map((l) => `<tr>
-      <td>${esc(l.player)}</td><td class="num">${l.wins}/${l.heists}</td>
+  $("leaders").innerHTML = r.leaders.length ? r.leaders.slice(0, 20).map((l, i) => `<tr>
+      <td class="num">${i + 1}</td><td>${esc(l.player)}</td><td class="num">${l.wins}/${l.heists}</td>
       <td class="num">${money(l.loot_off)}</td><td class="num ${l.loot_on ? "gold-text" : ""}">${money(l.loot_on)}</td></tr>`).join("")
-    : '<tr><td colspan="4" class="empty">No heists yet.</td></tr>';
+    : '<tr><td colspan="5" class="empty">No heists yet.</td></tr>';
   const me = r.leaders.find((l) => l.player === player());
   $("f-score").textContent = me ? `${me.wins} / ${me.heists}` : "0 / 0";
   const loot = me ? me.loot_off + me.loot_on : 0;
@@ -295,6 +354,7 @@ async function pollWire() {
 }
 
 drawPath([]);
+showScreen();
 loadHeist();
 loadIntel();
 pollWire();
