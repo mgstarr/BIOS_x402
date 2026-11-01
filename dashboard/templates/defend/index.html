@@ -44,6 +44,30 @@
   <div class="tile blue"><div class="num" id="t-saved">0¢</div><div class="lbl">Money saved</div></div>
 </section>
 
+<!-- 5b) learning -->
+<section class="panel learn" id="learn">
+  <div class="vs-head">
+    <h2>Self-learning <small class="muted">a hacker AI and the guard learn from real outcomes on the chain</small></h2>
+    <div class="learn-ctl">
+      <label>rounds <input id="l-rounds" type="number" min="1" max="200" value="5"></label>
+      <label>heists <input id="l-heists" type="number" min="1" max="100" value="10"></label>
+      <button id="l-train" class="btn" type="button">Train</button>
+      <button id="l-stop" class="btn small" type="button" hidden>Stop</button>
+      <button id="l-reset" class="btn small" type="button">Reset learning</button>
+    </div>
+  </div>
+  <p id="l-status" class="muted empty">Not trained yet. Press <b>Train</b>: the hacker tries new tricks, the guard gets stricter only where it is safe.</p>
+  <div class="learn-grid">
+    <div><h3>Hacker vs guard, per round</h3><div id="l-chart" class="lchart"></div>
+      <div class="lkey"><i class="red"></i> hacker success <i class="green"></i> guard accuracy</div></div>
+    <div><h3>What the hacker believes works</h3><div id="l-red"></div></div>
+    <div><h3>Guard strictness by shop trust</h3><div id="l-blue"></div></div>
+    <div><h3>Shop trust</h3><div id="l-trust"></div></div>
+  </div>
+  <h3>Discoveries <small class="muted">every breach becomes a permanent regression test</small></h3>
+  <div id="l-disc" class="empty muted">None yet.</div>
+</section>
+
 <!-- 6) legend -->
 <details class="legend">
   <summary><b>What does the guard check?</b> <span class="muted">8 quick checks on every bill (click to see)</span></summary>

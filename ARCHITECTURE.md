@@ -1,8 +1,7 @@
 # ARCHITECTURE
 
-> Snapshot taken on branch `rl` (cut from `main`). **The real defender is not on `main`**: `defender/*.py` there are one-line
-> stubs. The working defender (8 checks, `/mode`, `/stats`, `/reset`, defender dashboard page) lives only on `origin/defender`
-> (4 commits ahead). Everything below about the defender describes `origin/defender`.
+> Snapshot of branch `rl`. `origin/defender` has been merged in (it was missing from `main`). The sections up to
+> "Reinforcement learning" describe the pre-RL system; the RL section at the end lists what `rl` added.
 
 ## Services
 
@@ -85,3 +84,43 @@ filterable live feed, check legend. `MOCK=true` shows a SIMULATED badge.
 
 Attacker-controlled wallets watched: `ATTACKER` (Anvil #3) and `LOOKALIKE`. Facilitator reads block timestamp for expiry.
 Anvil `evm_snapshot` / `evm_revert` are available on the running fork.
+
+## Reinforcement learning (branch `rl`)
+
+**Extra services / env.** `python app.py defender` (7003) and `python app.py newshop` (5003, honest brand-new shop, 2c,
+own wallet). `.env` needs `ARENA_TOKEN` (gitignored; protects the label/learning endpoints). For real-chain training run
+shops/defender with `MOCK_SIGNER=false MOCK_FACILITATOR=false` and `SHOP_PAY_TO=0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC`
+(the wallet the defender trusts for TickToll). Training signs through `DEFENDER_URL`, not `SIGNER_URL`.
+
+**Honest pressure.** TickToll `/api/price-peak` (listed 1c in `/catalog`, billed 1.5c) and NewShop `/api/price` (2c, fresh
+`127.0.0.N` alias per heist so it is always a never-seen origin). Both are honest controls (`honest-peak`, `honest-newshop`).
+
+**Blue learner** (`defender/learner.py`, state `defender/learner_state.json`, gitignored). Profiles (`policy.PROFILES`):
+
+| profile | price x | expiry s | lookalike head/tail | new-shop limit |
+| --- | --- | --- | --- | --- |
+| lenient | 5 | 600 | 10/8 | 5c |
+| standard (= old behaviour) | 3 | 300 | 8/6 | 3c |
+| strict | 1.25 | 120 | 6/4 | 1.5c |
+
+Hard floors never learn: asset+network, `cap` 50c, mandate limits, `origin`, `duplicate`. The new-shop limit is applied inside
+the `cap` check, only in band `new`. Trust band per shop origin from labelled outcomes: `new` (<3 observations), else Beta mean
+(1+honest)/(2+honest+bad) >= 0.6 `trusted`, else `low`. Per band a 3-arm Thompson bandit (Beta); per-decision reward 1 correct /
+0.4 false block / 0 missed, applied as a Bernoulli draw. Gate: a sampled profile goes live only if every honest control seen for
+that band passes under it; else the last safe profile is used and the sampled arm is charged 0.4. Learning is OFF until
+`POST /learning/enable` (training turns it on and off). Defender endpoints: `POST /label {decision_id, truth}`, `POST
+/learning/enable`, `POST /learning/reset`, `POST /arena/soft-reset` (all need header `X-Arena-Token`), `GET /learning`. Responses
+from `/sign` carry `X-Decision-Id` (+ `-Band`, `-Profile`).
+
+**Red learner** (`attacker/rl/`, state `attacker/rl_state.json`, gitignored). Level 1: 3 families (overpayment, wrong_party,
+trick_agent). Level 2: tactics (`tactics.py`): catalogue attacks plus generated `/evil/custom` heists: `price:<usd>`,
+`expiry:<s>`, `look:<head>/<tail>` (wallet sharing exactly that many chars with TickToll's), `inject:<usd>` (same-site cheap item),
+`injshop:<usd>` (jump to another new shop; `origin` always blocks it). Beta arms, Bernoulli-drawn rewards, discount gamma 0.97 per
+update. Reward 1 if any watched attacker wallet's USDC balance rose on chain, else 0.5 x fraction of the 8 checks passed.
+
+**Training** (`attacker/rl/trainer.py`): `evm_snapshot` before, `evm_revert` in `finally`. Each heist: soft-reset the guard's ledger
+and pinned wallets, pay through the defender, measure balances, label via `/label`. Breaches are appended to
+`tests/regression/discoveries.json` (plain text + tx; deduped per tactic+band+profile) and replayed by
+`RUN_REGRESSION=1 pytest tests/regression`. Attacker API (7004): `POST /train {rounds, heists}`, `POST /train/stop`,
+`GET /learning` (training progress, per-round attacker success and guard accuracy, red arm beliefs, blue state incl. profile per
+band and shop trust, discoveries), `POST /learning/reset`. Dashboard: "Self-learning" panel on `/defend`.

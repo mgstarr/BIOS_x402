@@ -90,7 +90,7 @@ def shoot(heist: dict) -> dict:
             if resp.status_code != 402:
                 break
             req = decode_header(resp.headers.get(PAYMENT_REQUIRED, ""), PaymentRequired).accepts[0]
-            s = requests.post(f"{runner.SIGNER_URL}/sign", json={"requirements": req.model_dump(), "context": ctx},
+            s = requests.post(f"{runner.DEFENDER_URL}/sign", json={"requirements": req.model_dump(), "context": ctx},
                               timeout=TIMEOUT)
             out["decision_id"] = s.headers.get("X-Decision-Id") or out["decision_id"]
             out["band"] = s.headers.get("X-Decision-Band") or out["band"]

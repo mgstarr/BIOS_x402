@@ -101,7 +101,8 @@ def index():
     body = render_template("index.html", mock=MOCK, lookalike=LOOKALIKE, ticktoll=TICKTOLL, hacker=HACKER)
     return render_page("Defender", body, active="defend", theme="blue",
                        styles=(url_for("defend.static", filename="defend.css"),),
-                       scripts=(url_for("defend.static", filename="defend.js"),))
+                       scripts=(url_for("defend.static", filename="defend.js"),
+                                url_for("defend.static", filename="learn.js")))
 
 
 @bp.get("/api/stats")
@@ -167,6 +168,30 @@ def suite():
 @bp.get("/api/suite/last")
 def suite_last():
     return jsonify(LAST_SUITE["result"] or {})
+
+
+# --- learning (RL): everything goes through the attacker engine, which owns training ----------
+
+@bp.get("/api/learning")
+def learning():
+    if MOCK:
+        return jsonify({"error": "simulated", "unreachable": True}), 502
+    return proxy("GET", ATTACKER_URL, "/learning")
+
+
+@bp.post("/api/train")
+def train():
+    return proxy("POST", ATTACKER_URL, "/train", json=request.get_json(silent=True) or {})
+
+
+@bp.post("/api/train/stop")
+def train_stop():
+    return proxy("POST", ATTACKER_URL, "/train/stop", json={})
+
+
+@bp.post("/api/learning/reset")
+def learning_reset():
+    return proxy("POST", ATTACKER_URL, "/learning/reset", json={})
 
 
 def create_app():
