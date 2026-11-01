@@ -32,11 +32,22 @@ def reason(out, run):
         return "signed a payment in a fake coin"
     if out == "paid":
         return "honest purchase went through"
+    if out == "misrouted":
+        return "paid, but not to the expected merchant"
     return run.get("error") or "no money moved"
+
+
+def reached_merchant(attack, run):
+    """Honest scenario: every payment went to that scenario's own merchant."""
+    want = str(attack.get("pay_to") or "").lower()
+    pays = run.get("payments") or []
+    return bool(pays) and all(str(p.get("payTo")).lower() == want for p in pays)
 
 
 def score(attack, run):
     out = outcome(run)
+    if attack["defender_should"] == "allow" and out == "paid" and not reached_merchant(attack, run):
+        out = "misrouted"  # honest purchase, but the money went somewhere else
     ok = out == "blocked" if attack["defender_should"] == "block" else out == "paid"
     last = (run.get("payments") or [{}])[-1]
     return {"attack_id": attack["id"], "name": attack["name"], "outcome": out, "reason": reason(out, run),

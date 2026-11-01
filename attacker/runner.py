@@ -61,14 +61,20 @@ def is_ticktoll(addr):
     return str(addr).lower() == TICKTOLL.lower()
 
 
+def is_thief(addr):
+    """The wallets an attack steals into (the same two the real-chain path measures)."""
+    return str(addr).lower() in (ATTACKER.lower(), LOOKALIKE.lower())
+
+
 def is_real_usdc(asset):
     return asset is None or str(asset).lower() == USDC_ADDRESS.lower()
 
 
 def simulated_loss(payments):
-    """No chain: money lost = real-USDC payments that went anywhere but TickToll."""
+    """No chain: money lost = real-USDC payments that reached the attacker or lookalike wallet.
+    Paying a legitimate merchant (TickToll, the new shop) is not a loss."""
     return round(sum(p["amount_usd"] for p in payments
-                     if not is_ticktoll(p.get("payTo")) and is_real_usdc(p.get("asset"))), 6)
+                     if is_thief(p.get("payTo")) and is_real_usdc(p.get("asset"))), 6)
 
 
 def custom_url(custom):
@@ -138,7 +144,7 @@ def simulate(attack):
     elif attack["id"] == "fake-token":
         run["error"] = "facilitator rejected the wrong asset"
     else:
-        pay_to = TICKTOLL if not bad else ATTACKER
+        pay_to = attack.get("pay_to", TICKTOLL) if not bad else ATTACKER
         amt = 0.01 if not bad else 5.0
         run["payments"].append({"resource": attack["url"], "amount_usd": amt, "payTo": pay_to, "tx": "0xSIMULATED"})
         run["tx"] = "0xSIMULATED"
