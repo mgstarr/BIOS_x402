@@ -169,6 +169,23 @@ def mode():
     return jsonify({"enabled": STATE["enabled"]})
 
 
+@app.route("/rules", methods=["GET", "POST"])
+def rules():
+    """The owner's rules (limits, trusted shops, blocked wallets, checks on/off). POST edits them."""
+    if request.method == "POST":
+        body = request.get_json(silent=True)
+        if body == {"reset": True}:
+            policy.RULES.clear()
+            policy.RULES.update(policy.default_rules())
+        else:
+            try:
+                with lock:
+                    policy.update_rules(body or {})
+            except (ValueError, TypeError) as exc:
+                return bad_request(str(exc))
+    return jsonify({**policy.RULES, "check_names": dict(policy.CHECKS)})
+
+
 @app.get("/stats")
 def stats():
     with lock:

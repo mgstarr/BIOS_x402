@@ -62,7 +62,7 @@ def test_suite_restores_guard_when_second_phase_fails(monkeypatch):
     monkeypatch.setattr(evaluator, "set_guard", lambda e: calls.append(e))
     n = {"i": 0}
 
-    def flaky(player=None):
+    def flaky(player=None, mode=None):
         n["i"] += 1
         if n["i"] == 2:
             raise RuntimeError("down")

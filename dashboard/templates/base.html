@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}{% endblock %} | x402 Payments</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="{% block body_class %}{% endblock %}">
+<header class="bar">
+  <div class="bar-inner">
+    <a class="brand" href="/">x402 Payments <span>Guard</span></a>
+    <nav class="nav">
+      <a href="/" class="{{ 'on' if active == 'overview' }}">Overview</a>
+      <a href="/provider" class="{{ 'on' if active == 'provider' }}">Service provider</a>
+      <a href="/guard" class="{{ 'on' if active == 'guard' }}">Guard</a>
+      <a href="/attacker" class="{{ 'on' if active == 'attacker' }}">Attacker</a>
+    </nav>
+    <div class="bar-status">
+      <span>Guard <b id="st-guard">&ndash;</b></span>
+      <span>Agent wallet <b id="st-agent">&ndash;</b></span>
+      <span>Chain <b>Base Sepolia, local fork</b></span>
+    </div>
+  </div>
+</header>
+<main>
+{% block body %}{% endblock %}
+</main>
+<script src="/static/common.js"></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

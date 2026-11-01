@@ -54,11 +54,11 @@ def set_guard(enabled):
     r.raise_for_status()
 
 
-def run_all(player=None):
+def run_all(player=None, mode=None):
     results = []
     for a in ATTACKS:
         try:
-            results.append(score(a, runner.fire(a, player)))
+            results.append(score(a, runner.fire(a, player, mode=mode)))
         except Exception as e:
             results.append({"attack_id": a["id"], "name": a["name"], "outcome": "error", "reason": str(e),
                             "lost_usd": 0, "correct": False, "error": str(e)})
@@ -80,12 +80,12 @@ def summarize(results):
     }
 
 
-def suite(player=None):
+def suite(player=None, mode=None):
     try:
         set_guard(True)
-        on = summarize(run_all(player))
+        on = summarize(run_all(player, mode))
         set_guard(False)
-        off = summarize(run_all(player))
+        off = summarize(run_all(player, mode))
     finally:
         try:
             set_guard(True)

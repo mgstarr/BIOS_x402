@@ -31,6 +31,7 @@ fi
 # rejects its signatures. Remove that code on our local fork only.
 ~/.foundry/bin/cast rpc --rpc-url http://localhost:8545 anvil_setCode \
   0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266 0x > /dev/null
+bash chain/fund.sh  # demo start: agent wallet 100 USDC, attacker wallet 0
 
 sleep 1
 for s in "${SERVICES[@]}"; do

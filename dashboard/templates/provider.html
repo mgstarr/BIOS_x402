@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}TickToll{% endblock %}
+{% block body %}
+<div class="page-head">
+  <div class="shop-head">
+    <div class="shop-mark">TT</div>
+    <div>
+      <h1>TickToll</h1>
+      <p>Market data for software buyers, paid per request in USDC.</p>
+    </div>
+  </div>
+  <div class="side">
+    <div style="text-align:right">
+      <span class="label">Paid into</span>
+      <div class="mono" id="wallet">–</div>
+    </div>
+  </div>
+</div>
+
+<div class="figures">
+  <div class="figure"><div class="label">Revenue</div><div class="value" id="f-revenue">$0.00</div>
+    <div class="sub">settled on-chain</div></div>
+  <div class="figure"><div class="label">Paid invoices</div><div class="value" id="f-paid">0</div></div>
+  <div class="figure"><div class="label">Requests</div><div class="value" id="f-requests">0</div>
+    <div class="sub" id="f-declined"></div></div>
+  <div class="figure"><div class="label">Wallet balance</div><div class="value" id="f-balance">–</div>
+    <div class="sub">USDC</div></div>
+</div>
+
+<section class="panel">
+  <div class="panel-head"><h2>Services</h2><span class="small muted">Prices per request. Buyers pay before they receive the data.</span></div>
+  <div class="services" id="services"></div>
+</section>
+
+<div class="grid cols-wide" style="margin-top:18px">
+  <section class="panel">
+    <div class="panel-head"><h2>Incoming requests</h2><span class="small muted aside" id="mock-note"></span></div>
+    <table>
+      <thead><tr><th>Time</th><th>Service</th><th>Buyer</th><th class="num">Amount</th><th>Status</th></tr></thead>
+      <tbody id="orders"><tr><td colspan="5" class="empty">No requests yet.</td></tr></tbody>
+    </table>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head"><h2>Billing</h2></div>
+    <div id="invoice"><p class="empty">Select a paid request to see its invoice.</p></div>
+  </section>
+</div>
+{% endblock %}
+{% block scripts %}<script src="/static/provider.js"></script>{% endblock %}

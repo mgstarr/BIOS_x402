@@ -3,11 +3,12 @@
 DEFAULT_MANDATE = {"max_per_payment_usd": 0.10, "budget_usd": 0.50}
 
 
-def parse_mandate(context: dict) -> dict:
+def parse_mandate(context: dict, defaults: dict = DEFAULT_MANDATE) -> dict:
     """Mandate from the request context, filling gaps with the defaults. Bad numbers -> defaults."""
     raw = context.get("mandate") if isinstance(context.get("mandate"), dict) else {}
     out = {}
     for key, default in DEFAULT_MANDATE.items():
+        default = defaults.get(key, default)
         try:
             out[key] = float(raw.get(key, default))
         except (TypeError, ValueError):

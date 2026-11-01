@@ -26,8 +26,10 @@ def fresh(monkeypatch):
     monkeypatch.setenv("MOCK_SIGNER", "true")
     monkeypatch.setattr(server.catalog, "fetch", fake_fetch)
     server.reset_state()
+    policy.update_rules(policy.default_rules())
     yield
     server.reset_state()
+    policy.update_rules(policy.default_rules())
 
 
 @pytest.fixture
@@ -74,7 +76,6 @@ BLOCKED = [
     ("asset", bill(network="eip155:1"), {}),
     ("payee", bill(pay_to=ATTACKER), {}),
     ("payee", bill(pay_to=LOOKALIKE), {}),
-    ("cap", bill(amount="900000"), {}),
     ("price", bill(amount="50000"), {}),  # 5 cents for a 1-cent item
     ("mandate", bill(path="/api/report", amount="50000"),
      {"mandate": {"max_per_payment_usd": 0.02, "budget_usd": 0.50}}),
@@ -120,7 +121,7 @@ def test_price_reason_is_plain_english(client):
         r = sign(client, bill("/evil/x", amount="400000", origin=EVIL, pay_to=ATTACKER))
     finally:
         del CATALOGS[EVIL]
-    assert r.get_json()["reason"] == "Price is 40x the usual 1 cent"
+    assert r.get_json()["reason"] == "Price is 40x the usual 1¢"
 
 
 def test_unknown_shop_is_pinned_to_first_wallet(client):
@@ -135,8 +136,8 @@ def test_guard_off_forwards_but_still_logs(client):
     r = sign(client, bill(amount="900000", pay_to=ATTACKER))
     assert r.status_code == 200
     ev = client.get("/events").get_json()[-1]
-    assert ev["type"] == "allowed" and ev["data"]["guard"] == "off"
-    assert ev["data"]["would_block"]["check"] == "payee"
+    assert ev["type"] == "paid_unprotected" and ev["data"]["guard"] == "off"
+    assert "payee" in ev["data"]["would_have_blocked"]
     assert client.get("/stats").get_json()["blocked"] == 0
 
 
@@ -195,3 +196,33 @@ def test_origin_normalisation():
     assert origin_of("HTTP://LocalHost:5001/x?y=1") == "http://localhost:5001"
     assert origin_of("https://a.example/x") == "https://a.example:443"
     assert origin_of("not a url") is None
+
+
+def test_cap_blocks_when_owner_allows_big_payments(client):
+    policy.update_rules({"max_per_payment_usd": 5, "budget_usd": 10})
+    r = sign(client, bill("/api/unlisted", amount="900000"))  # no catalog price: only the cap stops it
+    assert r.status_code == 403 and r.get_json()["check"] == "cap"
+
+
+def test_task_mandate_cannot_loosen_owner_rules(client):
+    r = sign(client, bill("/api/unlisted", amount="200000"), mandate={"max_per_payment_usd": 5, "budget_usd": 10})
+    assert r.status_code == 403 and r.get_json()["check"] == "mandate"
+
+
+def test_owner_rules_blocked_wallet_and_known_shops_only(client):
+    policy.update_rules({"blocked_wallets": [TICKTOLL]})
+    assert sign(client, bill()).get_json()["check"] == "payee"
+    policy.update_rules({"blocked_wallets": [], "known_shops_only": True})
+    r = sign(client, bill("/evil/x", origin=EVIL, pay_to=ATTACKER))
+    assert r.status_code == 403 and "trusted shops" in r.get_json()["reason"]
+
+
+def test_owner_can_switch_a_check_off(client):
+    policy.update_rules({"checks": {"expiry": False}})
+    assert sign(client, bill(maxTimeoutSeconds=31536000)).status_code == 200
+
+
+def test_rules_endpoint_rejects_bad_values(client):
+    assert client.post("/rules", json={"cap_usd": -1}).status_code == 400
+    assert client.post("/rules", json={"blocked_wallets": ["nope"]}).status_code == 400
+    assert client.post("/rules", json={"cap_usd": 0.25}).get_json()["cap_usd"] == 0.25

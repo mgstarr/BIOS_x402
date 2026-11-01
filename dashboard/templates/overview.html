@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block title %}Overview{% endblock %}
+{% block body %}
+<div class="page-head">
+  <div class="intro">
+    <span class="label">Overview</span>
+    <h1>An AI agent that pays for data, and a guard that keeps it honest</h1>
+    <p>The agent buys data from web shops with real USDC on a local copy of Base Sepolia.
+       AI can be tricked by a dishonest shop. The guard can't, because it checks every bill
+       against the owner's rules before any signature exists.</p>
+  </div>
+</div>
+
+<div class="flow">
+  <div class="step"><span class="n">1</span><h3>The agent asks</h3>
+    <p>A task such as "price and mood for Ether". The agent picks what to buy.</p></div>
+  <div class="step"><span class="n">2</span><h3>The seller bills</h3>
+    <p>The shop answers HTTP 402 with a bill: amount, wallet, token, time limit.</p></div>
+  <div class="step"><span class="n">3</span><h3>The guard checks</h3>
+    <p>Eight plain rules. One failure and the bill is refused, nothing is signed.</p></div>
+  <div class="step"><span class="n">4</span><h3>Money moves</h3>
+    <p>Only allowed bills are signed and settled on-chain. The shop gets paid.</p></div>
+</div>
+
+<div class="grid cols-3 views">
+  <a class="panel view-link" href="/provider">
+    <span class="label">View 1</span><h2>Service provider</h2>
+    <p>TickToll, the honest shop: its services, incoming requests and invoices.</p>
+    <div class="figure-line"><div><span class="label">Revenue</span><b id="o-revenue">–</b></div>
+      <div><span class="label">Paid invoices</span><b id="o-paid">–</b></div></div>
+  </a>
+  <a class="panel view-link" href="/guard">
+    <span class="label">View 2</span><h2>Guard</h2>
+    <p>The owner's rules, and every bill the agent was asked to pay, with the verdict and the reason.</p>
+    <div class="figure-line"><div><span class="label">Checked</span><b id="o-checked">–</b></div>
+      <div><span class="label">Blocked</span><b id="o-blocked">–</b></div></div>
+  </a>
+  <a class="panel view-link" href="/attacker">
+    <span class="label">View 3</span><h2>Attacker</h2>
+    <p>The other side: send the agent bad bills, build new attacks, and see what gets through.</p>
+    <div class="figure-line"><div><span class="label">Taken by attackers</span><b id="o-loot">–</b></div>
+      <div><span class="label">AI wallet</span><b id="o-agent">–</b></div></div>
+  </a>
+</div>
+
+<section class="panel" style="margin-top:18px">
+  <div class="panel-head"><h2>Demo in five steps</h2><span class="small muted">Open each view in its own window, side by side.</span></div>
+  <table>
+    <tbody>
+      <tr><td class="time">1</td><td><b>Honest purchase.</b> On the Guard page, run the task "What is the price and market mood for Ether?".
+        The guard allows both bills and TickToll gets an invoice for each.</td></tr>
+      <tr><td class="time">2</td><td><b>Attack with the guard on.</b> On the Attacker page, launch Overcharge. The Guard page shows
+        it blocked: the price is 95 times the usual one. Nothing is signed.</td></tr>
+      <tr><td class="time">3</td><td><b>Switch the guard off</b> and launch the same attack. The agent pays 95 cents to the attacker,
+        on-chain, with a transaction ID.</td></tr>
+      <tr><td class="time">4</td><td><b>Build a new attack</b> the guard has never seen, and change the owner's rules on the Guard page
+        to see the verdicts change.</td></tr>
+      <tr><td class="time">5</td><td><b>Test all.</b> Every attack with the guard on and off: on stops all of them, off loses money,
+        and honest purchases go through either way.</td></tr>
+    </tbody>
+  </table>
+</section>
+{% endblock %}
+{% block scripts %}
+<script>
+window.onStatus = (s) => {
+  $("o-loot").textContent = s.attacker_usd == null ? "–" : dollars(s.attacker_usd);
+  $("o-agent").textContent = s.agent_usd == null ? "–" : dollars(s.agent_usd);
+};
+async function poll() {
+  const [p, d] = await Promise.all([api("provider"), api("decisions")]);
+  if (!p.error) {
+    $("o-revenue").textContent = dollars(p.revenue_usd);
+    $("o-paid").textContent = p.orders.filter((o) => o.status === "paid").length;
+  }
+  if (!d.error) {
+    $("o-checked").textContent = d.stats.checked || 0;
+    $("o-blocked").textContent = d.stats.blocked || 0;
+  }
+}
+poll();
+setInterval(poll, 3000);
+</script>
+{% endblock %}
