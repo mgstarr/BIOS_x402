@@ -7,6 +7,7 @@ either block (403) or pass the request on to the real signer (or fake a signatur
 Run:  python -m defender.server     or     python app.py defender
 """
 
+import hmac
 import os
 import secrets
 import threading
@@ -21,6 +22,7 @@ from contracts.payment import Authorization, PaymentPayload, PaymentRequirements
 from defender import policy
 from defender.events import log, record
 from defender.ledger import Ledger
+from defender.learner import BlueLearner
 
 load_dotenv()
 
@@ -33,6 +35,7 @@ ledger = Ledger()
 payees = policy.PayeeBook()
 catalog = policy.CatalogCache()
 STATE = {"enabled": True}
+learner = BlueLearner()
 
 
 def fresh_stats() -> dict:
@@ -80,6 +83,24 @@ def get_signature(body: dict, req: PaymentRequirements) -> tuple[dict, int]:
         return {"error": f"signer returned non-JSON (status {r.status_code})"}, 502
 
 
+def arena_ok() -> bool:
+    """True only if the caller sent the right ARENA_TOKEN (the attacker engine). Unset token = closed."""
+    token = os.getenv("ARENA_TOKEN", "")
+    given = request.headers.get("X-Arena-Token", "")
+    return bool(token) and hmac.compare_digest(token.encode(), given.encode())
+
+
+def tag_decision(resp, data: dict) -> None:
+    """Band and profile used for this decision, so the arena can report them (read-only info)."""
+    if data.get("band"):
+        resp.headers["X-Decision-Band"] = data["band"]
+        resp.headers["X-Decision-Profile"] = data["profile"]
+
+
+def denied():
+    return jsonify({"error": "missing or wrong ARENA_TOKEN"}), 403
+
+
 def event_data(req, context, decision, verdict) -> dict:
     """Everything the dashboard and attacker need about one decision.
 
@@ -125,7 +146,12 @@ def sign():
 
     with lock:
         # 1) Run every check ONCE, before this payment touches the ledger.
-        decision = policy.evaluate(req, context, ledger, payees, price)
+        choice = None
+        if learner.enabled and STATE["enabled"]:
+            choice = learner.choose(policy.shop_origin(req, context), payees)
+        profile = policy.PROFILES[choice["profile"]] if choice else None
+        decision = policy.evaluate(req, context, ledger, payees, price, profile,
+                                   choice["band"] if choice else None)
         head, failed = decision["headline"], decision["failed"]
         guard_on = STATE["enabled"]
         if not guard_on:
@@ -133,6 +159,15 @@ def sign():
         else:
             verdict = "blocked" if failed else "allowed"
         data = event_data(req, context, decision, verdict)
+        decision_id = secrets.token_hex(8)
+        data["decision_id"] = decision_id
+        if choice:
+            data.update(band=choice["band"], profile=choice["profile"], rolled_back=choice["rolled_back"])
+            if verdict != "paid_unprotected":
+                learner.remember(decision_id, {
+                    "verdict": verdict, "band": choice["band"], "profile": choice["profile"],
+                    "origin": decision["origin"], "path": decision["path"], "req": req.model_dump(),
+                    "context": context, "catalog_price": price})
         STATS["checked"] += 1
 
         if verdict == "blocked":
@@ -140,8 +175,13 @@ def sign():
             STATS["by_check"][head["id"]] += 1
             STATS["saved_usd"] = round(STATS["saved_usd"] + decision["amount_usd"], 6)
             record("blocked", data)
-            return jsonify({"blocked": True, "check": head["id"], "reason": head["reason"],
-                            "failed": data["failed"]}), 403
+            resp = jsonify({"blocked": True, "check": head["id"], "reason": head["reason"],
+                            "failed": data["failed"], "total_checks": len(policy.CHECKS),
+                            "decision_id": decision_id})
+            resp.status_code = 403
+            resp.headers["X-Decision-Id"] = decision_id
+            tag_decision(resp, data)
+            return resp
 
         # 2) Only now record the payment (reserves the spend so a parallel request can't
         #    slip past the budget). Nothing is re-checked after this point.
@@ -156,7 +196,11 @@ def sign():
     if status != 200:
         ledger.remove(entry)
         record("failed", {"resource": req.resource, "signer_status": status, "error": result.get("error")})
-    return jsonify(result), status
+    resp = jsonify(result)
+    resp.status_code = status
+    resp.headers["X-Decision-Id"] = decision_id
+    tag_decision(resp, data)
+    return resp
 
 
 @app.route("/mode", methods=["GET", "POST"])
@@ -195,6 +239,53 @@ def reset_state() -> None:
 @app.post("/reset")
 def reset():
     reset_state()
+    return jsonify({"ok": True})
+
+
+# --- learning (blue learner). Labels come only from the attacker engine, via ARENA_TOKEN. ------
+
+@app.post("/label")
+def label():
+    if not arena_ok():
+        return denied()
+    body = request.get_json(silent=True) or {}
+    if body.get("truth") not in ("attack", "honest"):
+        return bad_request('truth must be "attack" or "honest"')
+    out = learner.label(str(body.get("decision_id")), body["truth"])
+    if out is None:
+        return jsonify({"error": "unknown decision_id"}), 404
+    return jsonify(out)
+
+
+@app.get("/learning")
+def learning():
+    return jsonify(learner.snapshot())
+
+
+@app.post("/learning/enable")
+def learning_enable():
+    if not arena_ok():
+        return denied()
+    learner.enabled = bool((request.get_json(silent=True) or {}).get("enabled"))
+    return jsonify({"enabled": learner.enabled})
+
+
+@app.post("/learning/reset")
+def learning_reset():
+    if not arena_ok():
+        return denied()
+    learner.reset()
+    return jsonify({"ok": True})
+
+
+@app.post("/arena/soft-reset")
+def arena_soft_reset():
+    """Between training heists: forget the ledger and pinned wallets (NOT the learner), so each heist starts clean."""
+    if not arena_ok():
+        return denied()
+    with lock:
+        ledger.reset()
+        payees.reset()
     return jsonify({"ok": True})
 
 

@@ -18,7 +18,7 @@ def test_catalogue_shape():
         assert a["defender_should"] in ("block", "allow")
     assert {"overcharge", "drain", "fake-token", "long-expiry", "pay-again", "wrong-wallet",
             "lookalike", "injection"} <= set(ids)
-    assert sum(a["defender_should"] == "allow" for a in ATTACKS) == 2
+    assert sum(a["defender_should"] == "allow" for a in ATTACKS) == 4
 
 
 @pytest.mark.parametrize("run,expected", [
@@ -43,7 +43,7 @@ def test_fake_token_guard_off_is_not_stolen():
 def test_suite_scorecard():
     r = evaluator.suite()
     assert r["guard_on"]["lost_usd"] == 0 and r["guard_off"]["lost_usd"] > 0
-    assert r["guard_on"]["honest_allowed"] == 2
+    assert r["guard_on"]["honest_allowed"] == 4
 
 
 def test_suite_restores_guard_on_error(monkeypatch):

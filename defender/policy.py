@@ -44,6 +44,16 @@ CHECKS = [
     ("duplicate", "duplicate"),
 ]
 
+# Strictness profiles the blue learner chooses between. Only these four knobs ever change; the hard
+# floors (real USDC + network, DRAIN_CAP_USD, mandate limits, origin, duplicate) never learn.
+PROFILES = {
+    "lenient": {"price_mult": 5.0, "expiry_s": 600, "look_head": 10, "look_tail": 8, "new_shop_usd": 0.05},
+    "standard": {"price_mult": float(PRICE_MULTIPLIER), "expiry_s": MAX_TIMEOUT_S,
+                 "look_head": 8, "look_tail": 6, "new_shop_usd": 0.03},
+    "strict": {"price_mult": 1.25, "expiry_s": 120, "look_head": 6, "look_tail": 4, "new_shop_usd": 0.015},
+}
+DEFAULT_PROFILE = PROFILES["standard"]
+
 ADDRESS_RE = re.compile(r"^0x[0-9a-fA-F]{40}$")
 
 
@@ -66,12 +76,12 @@ def shop_name(origin: str | None) -> str:
 
 # --- payee memory -------------------------------------------------------------------------
 
-def lookalike_of(pay_to: str, known: set[str]) -> str | None:
-    """A known wallet that shares the first 8 and last 6 hex chars with pay_to but isn't it."""
+def lookalike_of(pay_to: str, known: set[str], head: int = 8, tail: int = 6) -> str | None:
+    """A known wallet that shares the first `head` and last `tail` hex chars with pay_to but isn't it."""
     a = pay_to.lower().removeprefix("0x")
     for wallet in known:
         k = wallet.lower().removeprefix("0x")
-        if a != k and a[:8] == k[:8] and a[-6:] == k[-6:]:
+        if a != k and a[:head] == k[:head] and a[-tail:] == k[-tail:]:
             return wallet
     return None
 
@@ -164,10 +174,10 @@ def check_asset(req: PaymentRequirements) -> tuple[bool, str]:
     return True, "real USDC on the test network"
 
 
-def check_payee(origin: str | None, pay_to: str, book: PayeeBook) -> tuple[bool, str]:
+def check_payee(origin: str | None, pay_to: str, book: PayeeBook, head: int = 8, tail: int = 6) -> tuple[bool, str]:
     if not ADDRESS_RE.match(pay_to or ""):
         return False, f"'{pay_to}' is not a valid wallet address"
-    like = lookalike_of(pay_to, book.known_wallets())
+    like = lookalike_of(pay_to, book.known_wallets(), head, tail)
     if like:
         return False, f"Wallet {pay_to} only looks like the known wallet {like} (lookalike address)"
     expected = book.expected(origin)
@@ -180,7 +190,10 @@ def check_payee(origin: str | None, pay_to: str, book: PayeeBook) -> tuple[bool,
     return True, f"matches the known wallet {short(expected)}"
 
 
-def check_cap(amount_usd: float) -> tuple[bool, str]:
+def check_cap(amount_usd: float, new_shop_usd: float | None = None) -> tuple[bool, str]:
+    """Hard drain cap, plus (only for a brand-new shop) the tunable new-shop spending limit."""
+    if new_shop_usd is not None and amount_usd > new_shop_usd + 1e-9:
+        return False, f"This shop is new to us; it asks {money(amount_usd)} but new shops may charge at most {money(new_shop_usd)}"
     if amount_usd > DRAIN_CAP_USD + 1e-9:
         return False, f"This bill is {money(amount_usd)}, more than the {money(DRAIN_CAP_USD)} spending cap"
     return True, f"{money(amount_usd)} is under the {money(DRAIN_CAP_USD)} spending cap"
@@ -190,7 +203,7 @@ def ratio_text(r: float) -> str:
     return f"{r:.0f}x" if r >= 10 else f"{r:.1f}".rstrip("0").rstrip(".") + "x"
 
 
-def check_price(amount_usd: float, catalog_price: float | None) -> tuple[bool, str]:
+def check_price(amount_usd: float, catalog_price: float | None, multiplier: float = PRICE_MULTIPLIER) -> tuple[bool, str]:
     if catalog_price is None:
         return True, "skipped: no catalog price for this item"
     if catalog_price <= 0:
@@ -198,17 +211,17 @@ def check_price(amount_usd: float, catalog_price: float | None) -> tuple[bool, s
             return False, f"This item is listed as free, but the bill asks for {money(amount_usd)}"
         return True, "free item"
     r = amount_usd / catalog_price
-    if amount_usd > PRICE_MULTIPLIER * catalog_price + 1e-9:
+    if amount_usd > multiplier * catalog_price + 1e-9:
         return False, f"Price is {ratio_text(r)} the usual {money(catalog_price)}"
     return True, f"{money(amount_usd)} vs usual {money(catalog_price)}"
 
 
-def check_expiry(seconds: int) -> tuple[bool, str]:
+def check_expiry(seconds: int, max_s: int = MAX_TIMEOUT_S) -> tuple[bool, str]:
     if seconds <= 0:
         return False, f"The bill's time limit ({seconds} s) makes no sense"
-    if seconds > MAX_TIMEOUT_S:
+    if seconds > max_s:
         return False, (f"The payment would stay valid for {seconds:,} seconds; "
-                       f"we allow at most {MAX_TIMEOUT_S} (5 minutes)")
+                       f"we allow at most {max_s:,}")
     return True, f"valid for {seconds} s"
 
 
@@ -221,22 +234,23 @@ def check_duplicate(resource: str, ledger: Ledger) -> tuple[bool, str]:
 
 
 def evaluate(req: PaymentRequirements, context: dict, ledger: Ledger, book: PayeeBook,
-             catalog_price: float | None) -> dict:
+             catalog_price: float | None, profile: dict | None = None, band: str | None = None) -> dict:
     """Run every check exactly once (call BEFORE recording the payment in the ledger).
 
     "failed" lists every failed check in priority order; "headline" is the first of them.
     """
+    prof = profile or DEFAULT_PROFILE
     origin = shop_origin(req, context)
     amount_usd = to_usd(req.amount)
     mandate = parse_mandate(context)
     results = {
         "origin": check_origin(context.get("intended_url"), context.get("final_url")),
         "asset": check_asset(req),
-        "payee": check_payee(origin, req.payTo, book),
-        "price": check_price(amount_usd, catalog_price),
+        "payee": check_payee(origin, req.payTo, book, prof['look_head'], prof['look_tail']),
+        "price": check_price(amount_usd, catalog_price, prof['price_mult']),
         "mandate": check_mandate(amount_usd, mandate, ledger.spent(mandate["task"])),
-        "cap": check_cap(amount_usd),
-        "expiry": check_expiry(req.maxTimeoutSeconds),
+        "cap": check_cap(amount_usd, prof["new_shop_usd"] if band == "new" else None),
+        "expiry": check_expiry(req.maxTimeoutSeconds, prof["expiry_s"]),
         "duplicate": check_duplicate(req.resource, ledger),
     }
     checks = [{"id": cid, "name": name, "ok": results[cid][0], "reason": results[cid][1]}

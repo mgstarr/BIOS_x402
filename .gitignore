@@ -1,3 +1,5 @@
 ﻿.venv/
 .env
 __pycache__/
+defender/learner_state.json
+attacker/rl_state.json

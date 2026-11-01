@@ -85,6 +85,13 @@ PRODUCTS = {
 }
 
 
+# Honest surge pricing: listed at 1 cent, billed at 1.5x at peak times. Not on the website
+# (PRODUCTS only); it is in /catalog so the guard's price check has a list price to compare to.
+SURGE_LIST_USD = 0.01
+SURGE_PEAK_USD = 0.015
+SURGE_PRODUCTS = {"/api/price-peak": (SURGE_LIST_USD, "Live price at peak rate (billed 1.5x the list price)")}
+
+
 def catalog_items() -> list[dict]:
     """The menu as a list of dicts. Used by GET /catalog AND by the website's pricing cards."""
     base = request.host_url.rstrip("/")
@@ -95,7 +102,7 @@ def catalog_items() -> list[dict]:
             "price_usd": price_usd,
             "example_url": f"{base}{path}?symbol=ETH",
         }
-        for path, (price_usd, description) in PRODUCTS.items()
+        for path, (price_usd, description) in {**PRODUCTS, **SURGE_PRODUCTS}.items()
     ]
 
 
@@ -366,6 +373,14 @@ def sentiment():
 def report():
     symbol = request.args["symbol"].upper()
     return jsonify({**MARKET_DATA["reports"][symbol], "as_of": MARKET_DATA["as_of"]})
+
+
+@app.get("/api/price-peak")
+@known_symbol
+@paid(SURGE_PEAK_USD, description="Live price, peak-rate billing (honest 1.5x surge)")
+def price_peak():
+    symbol = request.args["symbol"].upper()
+    return jsonify({**MARKET_DATA["prices"][symbol], "as_of": MARKET_DATA["as_of"]})
 
 
 # --- COMPROMISE DEMO (demo-only, NOT shown on the TickToll website) ----------------------

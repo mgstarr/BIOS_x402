@@ -43,6 +43,14 @@ def main() -> None:
 
         print(payment_mode())
         app.run(host="0.0.0.0", port=7000)
+    elif service == "newshop":  # honest brand-new shop (port 5003)
+        from shops.newshop import run
+
+        run()
+    elif service == "defender":  # guard in front of the signer (port 7003)
+        from defender.server import run
+
+        run()
     elif service == "attacker":  # Person B: attacker engine (port 7004)
         from attacker.server import app
 
