@@ -62,6 +62,7 @@
 
   async function loadWallet() {
     const w = await api("/wallet");
+    if (w.balance_usd == null) return;  // engine up but wallet unknown: keep what we show
     setBalance(Number(w.balance_usd));
     if (w.loot_usd !== undefined) localLoot = Number(w.loot_usd);
     setLoot(localLoot, 0);
@@ -106,6 +107,9 @@
       head = "\u{1FA99} TRICKED, BUT WORTHLESS";
       extra = `<div class="sub">The AI signed a payment in a fake coin. A real attacker would use this
         to fool shops. Guard ON blocks it before signing.</div>`;
+    } else if (r.outcome === "error") {
+      cls = "refused";
+      head = `⚠ ERROR: ${esc(r.reason || "something went wrong")}`;
     } else {
       cls = "refused";
       head = `✋ REFUSED by shop: ${esc(r.reason)}`;
@@ -188,11 +192,11 @@
       if (r.outcome === "stolen") flash("flash-red");
       else if (r.outcome === "blocked") flash("flash-green");
 
-      if (r.balance_usd !== undefined) setBalance(Number(r.balance_usd));
+      if (r.balance_usd != null) setBalance(Number(r.balance_usd));
       const gained = r.outcome === "stolen" ? Number(r.amount_usd || 0) : 0;
       localLoot = r.loot_usd !== undefined ? Number(r.loot_usd) : localLoot + gained;
       setLoot(localLoot, gained);
-      if (r.balance_usd === undefined) await loadWallet();
+      if (r.balance_usd == null) await loadWallet();
       await loadBoard();
     } catch (e) {
       b.className = "banner refused";

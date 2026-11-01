@@ -86,7 +86,7 @@ def mode():
 def suite():
     if MOCK and os.getenv("ATTACKER_MOCK_LOCAL", "true") == "true":
         return jsonify(sim_suite())
-    return proxy("POST", ATTACKER_URL, "/suite", json={}, timeout=600)
+    return proxy("POST", ATTACKER_URL, "/suite", json={}, timeout=140)
 
 
 def create_app():

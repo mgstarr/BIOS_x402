@@ -1,12 +1,16 @@
 const $ = (id) => document.getElementById(id);
 const short = (a) => (a && a.length > 12 ? a.slice(0, 6) + "..." + a.slice(-4) : a || "?");
 
-async function api(path, opts) {
+async function api(path, opts, timeoutMs = 10000) {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), timeoutMs);
   try {
-    const r = await fetch("api/" + path, opts);
+    const r = await fetch("api/" + path, { ...opts, signal: ctl.signal });
     return await r.json();
   } catch (e) {
-    return { error: String(e) };
+    return { error: e.name === "AbortError" ? `no answer after ${timeoutMs / 1000} s` : String(e) };
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -63,7 +67,7 @@ async function pollStats() {
 function card(title, cls, s) {
   return `<div class="card ${cls}"><h3>${title}</h3>
     <div>Attacks blocked: ${s.blocked}</div><div>Attacks stolen: ${s.stolen ?? 0}</div>
-    <div>Money lost: $${Number(s.lost_usd).toFixed(2)}</div>
+    <div>Money lost: $${Number(s.lost_usd).toFixed(2)}</div>${s.errors ? `<div>Errors: ${s.errors}</div>` : ""}
     <div>Honest allowed: ${s.honest_allowed}/${s.honest_total ?? s.honest_allowed}</div></div>`;
 }
 
@@ -71,9 +75,13 @@ async function runSuite() {
   const btn = $("run");
   btn.disabled = true;
   btn.textContent = "Running...";
-  const r = await api("suite", { method: "POST" });
-  btn.disabled = false;
-  btn.textContent = "Run full test";
+  let r;
+  try {
+    r = await api("suite", { method: "POST" }, 150000);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Run full test";
+  }
   if (r.error) { $("score").innerHTML = `<div class="empty">Suite failed: ${r.error}</div>`; return; }
   $("score").innerHTML = card("Guard ON", "on", r.guard_on) + card("Guard OFF", "off", r.guard_off);
   if (r.simulated) $("sim").hidden = false;
