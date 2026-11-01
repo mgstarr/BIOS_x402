@@ -80,3 +80,54 @@ async function refreshStatus() {
 }
 refreshStatus();
 setInterval(refreshStatus, 3000);
+
+// --- the learning race chart -------------------------------------------------------------
+// lineChart(el, rounds, series): one 0-100% axis, x = training round. series: [{name, cls, values}]
+// (values 0..1 or null). Thin lines, markers, a legend, a direct label at each line's end, and a
+// hover crosshair with the exact numbers for that round. A table view sits under it for screen readers.
+function lineChart(el, rounds, series) {
+  if (!rounds.length) { el.innerHTML = '<p class="empty">No training yet. Start a round above.</p>'; return; }
+  const W = 560, H = 220, L = 40, R = 110, T = 14, B = 30;
+  const x = (i) => L + (rounds.length === 1 ? (W - L - R) / 2 : (i * (W - L - R)) / (rounds.length - 1));
+  const y = (v) => T + (1 - v) * (H - T - B);
+  const grid = [0, 0.25, 0.5, 0.75, 1].map((v) =>
+    `<line class="grid" x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}"/><text class="axis" x="${L - 6}" y="${y(v) + 4}" text-anchor="end">${v * 100}%</text>`).join("");
+  const ticks = rounds.map((r, i) => (rounds.length <= 12 || i % Math.ceil(rounds.length / 12) === 0)
+    ? `<text class="axis" x="${x(i)}" y="${H - 10}" text-anchor="middle">${r}</text>` : "").join("");
+  const lines = series.map((s) => {
+    const pts = s.values.map((v, i) => (v == null ? null : [x(i), y(v)])).filter(Boolean);
+    const last = pts[pts.length - 1], lastV = [...s.values].reverse().find((v) => v != null);
+    return `<g class="series ${s.cls}"><polyline points="${pts.map((p) => p.join(",")).join(" ")}"/>
+      ${pts.map((p) => `<circle cx="${p[0]}" cy="${p[1]}" r="4"/>`).join("")}
+      ${last ? `<text class="end-label" x="${last[0] + 8}" y="${last[1] + 4}">${esc(s.name)} ${Math.round(lastV * 100)}%</text>` : ""}</g>`;
+  }).join("");
+  el.innerHTML = `<div class="legend">${series.map((s) => `<span class="key ${s.cls}"><i></i>${esc(s.name)}</span>`).join("")}</div>
+    <div class="chart-wrap"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(series.map((s) => s.name).join(" and "))} by training round">
+      ${grid}${ticks}<text class="axis" x="${(W - R + L) / 2}" y="${H}" text-anchor="middle">training round</text>
+      ${lines}<line class="crosshair" y1="${T}" y2="${H - B}" style="display:none"/></svg>
+      <div class="tip" style="display:none"></div></div>
+    <table class="sr-only"><thead><tr><th>Round</th>${series.map((s) => `<th>${esc(s.name)}</th>`).join("")}</tr></thead>
+      <tbody>${rounds.map((r, i) => `<tr><td>${r}</td>${series.map((s) => `<td>${s.values[i] == null ? "–" : Math.round(s.values[i] * 100) + "%"}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
+  const svg = el.querySelector("svg"), tip = el.querySelector(".tip"), cross = el.querySelector(".crosshair");
+  svg.addEventListener("mousemove", (e) => {
+    const box = svg.getBoundingClientRect(), sx = ((e.clientX - box.left) / box.width) * W;
+    let i = 0;
+    rounds.forEach((_, j) => { if (Math.abs(x(j) - sx) < Math.abs(x(i) - sx)) i = j; });
+    cross.setAttribute("x1", x(i)); cross.setAttribute("x2", x(i)); cross.style.display = "";
+    tip.style.display = "";
+    tip.style.left = `${(x(i) / W) * 100}%`;
+    tip.innerHTML = `<b>Round ${rounds[i]}</b>` + series.map((s) =>
+      `<div><span class="key ${s.cls}"><i></i>${esc(s.name)}</span> ${s.values[i] == null ? "–" : Math.round(s.values[i] * 100) + "%"}</div>`).join("");
+  });
+  svg.addEventListener("mouseleave", () => { tip.style.display = "none"; cross.style.display = "none"; });
+}
+
+// Plain names for the attacker's tactic ids, e.g. "look:7/5" -> "Look-alike wallet, 7+5 characters".
+function tacticName(t) {
+  const [kind, arg] = t.split(":");
+  const names = { cat: () => ({ overcharge: "Overcharge", drain: "Big drain", "pay-again": "Pay me twice", "long-expiry": "Forever cheque",
+    "wrong-wallet": "Inside job", lookalike: "Lookalike (catalogue)", "fake-token": "Fake money", injection: "Mind trick" }[arg] || arg),
+    price: () => `New shop at ${money(+arg)}`, expiry: () => `Cheque lasting ${arg} s`, look: () => `Look-alike wallet, ${arg.replace("/", "+")} chars`,
+    fresh: () => `Fresh wallet at ${money(+arg)}`, inject: () => `Hidden order, ${money(+arg)} item`, injshop: () => `Hidden order to a new shop` };
+  return (names[kind] || (() => t))();
+}

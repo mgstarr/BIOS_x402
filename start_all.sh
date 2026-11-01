@@ -12,6 +12,7 @@ SERVICES=(
   "defender:7003:$PY app.py defender"
   "shop:5001:$PY app.py shop"
   "evil:5002:$PY app.py evil"
+  "newshop:5003:$PY app.py newshop"
   "agent:7000:$PY app.py agent"
   "attacker:7004:$PY app.py attacker"
   "dashboard:8000:$PY app.py dashboard"

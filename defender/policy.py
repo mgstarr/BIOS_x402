@@ -119,12 +119,12 @@ def shop_name(origin: str | None) -> str:
 
 # --- payee memory -------------------------------------------------------------------------
 
-def lookalike_of(pay_to: str, known: set[str]) -> str | None:
-    """A known wallet that shares the first 8 and last 6 hex chars with pay_to but isn't it."""
+def lookalike_of(pay_to: str, known: set[str], head: int = 8, tail: int = 6) -> str | None:
+    """A known wallet that shares the first `head` and last `tail` hex chars with pay_to but isn't it."""
     a = pay_to.lower().removeprefix("0x")
     for wallet in known:
         k = wallet.lower().removeprefix("0x")
-        if a != k and a[:8] == k[:8] and a[-6:] == k[-6:]:
+        if a != k and a[:head] == k[:head] and a[-tail:] == k[-tail:]:
             return wallet
     return None
 
@@ -221,12 +221,15 @@ def check_asset(req: PaymentRequirements) -> tuple[bool, str]:
     return True, "real USDC on the test network"
 
 
-def check_payee(origin: str | None, pay_to: str, book: PayeeBook) -> tuple[bool, str]:
+def check_payee(origin: str | None, pay_to: str, book: PayeeBook, look: tuple[int, int] = (8, 6),
+                bad_wallets: dict | None = None) -> tuple[bool, str]:
     if not ADDRESS_RE.match(pay_to or ""):
         return False, f"'{pay_to}' is not a valid wallet address"
     if pay_to.lower() in {w.lower() for w in RULES["blocked_wallets"]}:
         return False, f"Wallet {short(pay_to)} is on the owner's blocked list"
-    like = lookalike_of(pay_to, book.known_wallets())
+    if bad_wallets and pay_to.lower() in bad_wallets:
+        return False, f"Wallet {short(pay_to)} has received money from attacks before (learned)"
+    like = lookalike_of(pay_to, book.known_wallets(), *look)
     if like:
         return False, f"Wallet {pay_to} only looks like the known wallet {like} (lookalike address)"
     expected = book.expected(origin)
@@ -241,7 +244,12 @@ def check_payee(origin: str | None, pay_to: str, book: PayeeBook) -> tuple[bool,
     return True, f"matches the known wallet {short(expected)}"
 
 
-def check_cap(amount_usd: float) -> tuple[bool, str]:
+def check_cap(amount_usd: float, new_shop_usd: float | None = None) -> tuple[bool, str]:
+    """The owner's hard cap, plus (only for a shop the guard has never been told about) the learned
+    new-shop limit."""
+    if new_shop_usd is not None and amount_usd > new_shop_usd + 1e-9:
+        return False, (f"This shop is new to us; it asks {money(amount_usd)} but new shops may charge "
+                       f"at most {money(new_shop_usd)} (learned)")
     cap = RULES["cap_usd"]
     if amount_usd > cap + 1e-9:
         return False, f"This bill is {money(amount_usd)}, more than the {money(cap)} spending cap"
@@ -252,7 +260,7 @@ def ratio_text(r: float) -> str:
     return f"{r:.0f}x" if r >= 10 else f"{r:.1f}".rstrip("0").rstrip(".") + "x"
 
 
-def check_price(amount_usd: float, catalog_price: float | None) -> tuple[bool, str]:
+def check_price(amount_usd: float, catalog_price: float | None, multiplier: float | None = None) -> tuple[bool, str]:
     if catalog_price is None:
         return True, "skipped: no catalog price for this item"
     if catalog_price <= 0:
@@ -260,18 +268,18 @@ def check_price(amount_usd: float, catalog_price: float | None) -> tuple[bool, s
             return False, f"This item is listed as free, but the bill asks for {money(amount_usd)}"
         return True, "free item"
     r = amount_usd / catalog_price
-    if amount_usd > RULES["price_multiplier"] * catalog_price + 1e-9:
+    if amount_usd > (multiplier or RULES["price_multiplier"]) * catalog_price + 1e-9:
         return False, f"Price is {ratio_text(r)} the usual {money(catalog_price)}"
     return True, f"{money(amount_usd)} vs usual {money(catalog_price)}"
 
 
-def check_expiry(seconds: int) -> tuple[bool, str]:
+def check_expiry(seconds: int, max_s: float | None = None) -> tuple[bool, str]:
     if seconds <= 0:
         return False, f"The bill's time limit ({seconds} s) makes no sense"
-    limit = int(RULES["max_timeout_s"])
+    limit = int(max_s or RULES["max_timeout_s"])
     if seconds > limit:
         return False, (f"The payment would stay valid for {seconds:,} seconds; "
-                       f"the owner allows at most {limit:,}")
+                       f"the guard allows at most {limit:,}")
     return True, f"valid for {seconds} s"
 
 
@@ -283,12 +291,25 @@ def check_duplicate(resource: str, ledger: Ledger) -> tuple[bool, str]:
     return True, "not paid for recently"
 
 
+def effective(tuning: dict | None) -> dict:
+    """What the guard learned, combined with the owner's rules: always the STRICTER of the two.
+    The learner can tighten a rule, never loosen it."""
+    t = tuning or {}
+    return {"price_mult": min(t.get("price_mult", 1e9), RULES["price_multiplier"]),
+            "expiry_s": min(t.get("expiry_s", 1e9), RULES["max_timeout_s"]),
+            "look": tuple(min(a, b) for a, b in zip(t.get("look", (8, 6)), (8, 6))),
+            "new_shop_usd": t.get("new_shop_usd"),
+            "bad_wallets": t.get("bad_wallets") or {}}
+
+
 def evaluate(req: PaymentRequirements, context: dict, ledger: Ledger, book: PayeeBook,
-             catalog_price: float | None) -> dict:
+             catalog_price: float | None, tuning: dict | None = None) -> dict:
     """Run every check exactly once (call BEFORE recording the payment in the ledger).
 
+    tuning = what the learner settled on for this shop (see defender/learner.py), or None.
     "failed" lists every failed check in priority order; "headline" is the first of them.
     """
+    eff = effective(tuning)
     origin = shop_origin(req, context)
     amount_usd = to_usd(req.amount)
     mandate = parse_mandate(context, RULES)
@@ -297,11 +318,11 @@ def evaluate(req: PaymentRequirements, context: dict, ledger: Ledger, book: Paye
     results = {
         "origin": check_origin(context.get("intended_url"), context.get("final_url")),
         "asset": check_asset(req),
-        "payee": check_payee(origin, req.payTo, book),
-        "price": check_price(amount_usd, catalog_price),
+        "payee": check_payee(origin, req.payTo, book, eff["look"], eff["bad_wallets"]),
+        "price": check_price(amount_usd, catalog_price, eff["price_mult"]),
         "mandate": check_mandate(amount_usd, mandate, ledger.spent(mandate["task"])),
-        "cap": check_cap(amount_usd),
-        "expiry": check_expiry(req.maxTimeoutSeconds),
+        "cap": check_cap(amount_usd, eff["new_shop_usd"]),
+        "expiry": check_expiry(req.maxTimeoutSeconds, eff["expiry_s"]),
         "duplicate": check_duplicate(req.resource, ledger),
     }
     for cid, on in RULES["checks"].items():

@@ -80,6 +80,12 @@ PARAMS = {
 }
 
 
+# Honest surge pricing: listed at 1 cent, billed 1.5x at peak times. It is in /catalog (so the guard has
+# a list price to compare with) but not on the shop page. It exists to keep the learning guard honest:
+# a guard that gets too strict about price would wrongly block it.
+SURGE = {"path": "/api/price-peak", "list_usd": 0.01, "peak_usd": 0.015}
+
+
 def catalog_items() -> list[dict]:
     """The menu as a list of dicts. Used by GET /catalog (buyers, the guard and the dashboard)."""
     base = request.host_url.rstrip("/")
@@ -97,6 +103,9 @@ def catalog_items() -> list[dict]:
             "options": options,
             "example_url": f"{base}{path}?{param}={example.replace(' ', '%20')}",
         })
+    items.append({"path": SURGE["path"], "description": "Coin price at the peak-hours rate (billed 1.5x list)",
+                  "price_usd": SURGE["list_usd"], "category": "Peak", "param": "symbol",
+                  "options": sorted(MARKET_DATA["prices"]), "example_url": f"{base}{SURGE['path']}?symbol=ETH"})
     return items
 
 
@@ -166,6 +175,14 @@ def sentiment():
 def report():
     symbol = request.args["symbol"].upper()
     return jsonify({**MARKET_DATA["reports"][symbol], "as_of": MARKET_DATA["as_of"]})
+
+
+@app.get("/api/price-peak")
+@known_symbol
+@paid(SURGE["peak_usd"], description="Coin price, peak-hours rate (honest 1.5x surge)")
+def price_peak():
+    symbol = request.args["symbol"].upper()
+    return jsonify({**MARKET_DATA["prices"][symbol], "as_of": MARKET_DATA["as_of"]})
 
 
 def lookup(table: str, param: str):

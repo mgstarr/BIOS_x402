@@ -88,6 +88,48 @@
   </div>
 </section>
 
+<section class="panel section-gap">
+  <div class="panel-head"><h2>5. The attacker that teaches itself</h2>
+    <span class="small muted">Reinforcement learning. Red learns what gets paid; the guard learns from every attack.</span></div>
+  <div class="panel-body">
+    <div class="grid cols-2" style="align-items:start">
+      <div>
+        <p class="small">Press Train and step back. The attacker plays rounds against the guard on its own: it picks a
+          tactic, sends the bill, and checks on the blockchain whether USDC reached its wallets. Tactics that get paid
+          are played more, tactics that keep failing are dropped, and it invents new variants near each rule's edge.
+          Honest purchases are mixed in, so the guard is punished for blocking them. The chain is rolled back after
+          training: no money is really lost, but both sides keep what they learned.</p>
+        <div class="row" style="margin-top:12px">
+          <label class="small muted">Rounds</label><input id="t-rounds" type="number" min="1" max="50" value="5" style="width:70px">
+          <label class="small muted">Heists per round</label><input id="t-heists" type="number" min="1" max="40" value="10" style="width:70px">
+          <button class="gold" id="t-start">Train</button>
+          <button class="ghost small" id="t-stop">Stop</button>
+          <button class="ghost small" id="t-reset">Forget all learning</button>
+        </div>
+        <div class="progress"><div id="t-bar" style="width:0"></div></div>
+        <p class="small muted" id="t-status" style="margin-top:6px"></p>
+      </div>
+      <div><span class="label">The race, round by round</span><div id="race" style="margin-top:6px"></div></div>
+    </div>
+    <div class="grid cols-2 section-gap" style="align-items:start">
+      <div>
+        <span class="label">What the attacker believes works</span>
+        <div id="families" style="margin-top:8px"></div>
+        <table style="margin-top:10px">
+          <thead><tr><th>Tactic</th><th class="num">Tried</th><th class="num">Got paid</th><th class="num">Belief</th></tr></thead>
+          <tbody id="tactics"></tbody>
+        </table>
+      </div>
+      <div>
+        <span class="label">What it discovered (holes it found, saved as regression tests)</span>
+        <div id="discoveries" style="margin-top:6px"></div>
+        <span class="label" style="display:block; margin-top:14px">Latest training heists</span>
+        <table><tbody id="t-recent"></tbody></table>
+      </div>
+    </div>
+  </div>
+</section>
+
 <div class="grid cols-wide section-gap">
   <section class="panel">
     <div class="panel-head"><h2>Intel: what works, and how</h2>

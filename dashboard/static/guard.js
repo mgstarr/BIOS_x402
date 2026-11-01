@@ -343,3 +343,52 @@ if (sharedRun) {
   runTimer = setInterval(followRun, 700);
   followRun();
 }
+
+// --- the guard that teaches itself (reinforcement learning) ------------------------------
+let band = "new", learned = null;
+const BAND_NAMES = { new: "New shop", trusted: "Trusted", low: "Suspicious" };
+const knobValue = (knob, v) => knob === "price_mult" ? `${v}x usual` : knob === "expiry_s" ? `${v} s`
+  : knob === "look" ? `${v[0]}+${v[1]} chars` : money(v);
+
+function drawKnobs() {
+  if (!learned) return;
+  document.querySelectorAll("#band-tabs button").forEach((b) => b.classList.toggle("on", b.dataset.band === band));
+  const knobs = learned.blue.bands[band];
+  $("knobs").innerHTML = Object.entries(knobs).filter(([k]) => band === "new" || k !== "new_shop_usd").map(([k, v]) => `
+    <tr><td>${esc(v.title)}</td><td><div class="knob-cells">${v.levels.map((l) =>
+      `<span class="${l.name === v.live ? "live" : ""} ${l.safe ? "" : "unsafe"}" title="${l.name}: score ${Math.round(l.score * 100)}% from ${l.evidence} bills">${knobValue(k, l.value)}</span>`).join("")}
+    </div></td></tr>`).join("");
+}
+
+$("band-tabs").addEventListener("click", (e) => {
+  const b = e.target.closest("button");
+  if (b) { band = b.dataset.band; drawKnobs(); }
+});
+
+async function loadLearned() {
+  const d = await api("learning");
+  if (d.error || !d.blue) return;
+  learned = d;
+  const c = d.blue.counts;
+  $("b-labelled").textContent = c.labelled;
+  $("b-acc").textContent = d.blue.accuracy == null ? "–" : Math.round(d.blue.accuracy * 100) + "%";
+  $("b-fb").textContent = c.false_blocks;
+  $("b-missed").textContent = c.missed;
+  const rounds = d.training.rounds_log;
+  lineChart($("race"), rounds.map((m) => m.round), [
+    { name: "Attacker got paid", cls: "attack", values: rounds.map((m) => m.attacker_success_rate) },
+    { name: "Guard correct", cls: "guard", values: rounds.map((m) => m.guard_accuracy) },
+  ]);
+  const bad = Object.entries(d.blue.bad_wallets).sort((a, b) => b[1].hits - a[1].hits);
+  $("bad-count").textContent = bad.length ? `${bad.length} wallet${bad.length > 1 ? "s" : ""} took attack money and will not be paid again.`
+    : "None yet.";
+  $("bad-wallets").innerHTML = bad.slice(0, 6).map(([w, v]) => `${esc(walletName(w))} · ${v.hits} attack${v.hits > 1 ? "s" : ""}`).join("<br>");
+  const shops = Object.entries(d.blue.trust).filter(([o]) => !/127\.0\.0\./.test(o));
+  const aliases = Object.entries(d.blue.trust).filter(([o]) => /127\.0\.0\./.test(o)).length;
+  $("trust").innerHTML = shops.map(([o, t]) => `<tr><td>${esc(shopName(o))}</td><td class="num">${t.honest}</td>
+    <td class="num">${t.bad}</td><td>${BAND_NAMES[t.band]}</td></tr>`).join("") +
+    (aliases ? `<tr><td colspan="4" class="small muted">plus ${aliases} brand-new shops the attacker set up during training</td></tr>` : "");
+  drawKnobs();
+  setTimeout(loadLearned, d.training.running ? 2000 : 8000);
+}
+loadLearned();

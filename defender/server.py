@@ -7,6 +7,7 @@ either block (403) or pass the request on to the real signer (or fake a signatur
 Run:  python -m defender.server     or     python app.py defender
 """
 
+import hmac
 import os
 import secrets
 import threading
@@ -20,6 +21,7 @@ from pydantic import ValidationError
 from contracts.payment import Authorization, PaymentPayload, PaymentRequirements
 from defender import policy
 from defender.events import log, record
+from defender.learner import BlueLearner
 from defender.ledger import Ledger
 
 load_dotenv()
@@ -33,6 +35,7 @@ ledger = Ledger()
 payees = policy.PayeeBook()
 catalog = policy.CatalogCache()
 STATE = {"enabled": True}
+learner = BlueLearner()
 
 
 def fresh_stats() -> dict:
@@ -121,11 +124,15 @@ def sign():
         return bad_request("context must be an object")
 
     # Network call to the shop's /catalog happens outside the lock.
-    price = catalog.reference_price(policy.shop_origin(req, context), policy.path_of(req.resource))
+    origin = policy.shop_origin(req, context)
+    price = catalog.reference_price(origin, policy.path_of(req.resource))
+    arena = arena_ok()  # a training heist from the attacker engine: kept out of the live feed and stats
 
     with lock:
-        # 1) Run every check ONCE, before this payment touches the ledger.
-        decision = policy.evaluate(req, context, ledger, payees, price)
+        # 1) Run every check ONCE, before this payment touches the ledger, with what the guard has
+        #    learned for this kind of shop (never looser than the owner's rules).
+        learned = learner.choose(origin)
+        decision = policy.evaluate(req, context, ledger, payees, price, learned["tuning"])
         head, failed = decision["headline"], decision["failed"]
         guard_on = STATE["enabled"]
         if not guard_on:
@@ -133,30 +140,48 @@ def sign():
         else:
             verdict = "blocked" if failed else "allowed"
         data = event_data(req, context, decision, verdict)
-        STATS["checked"] += 1
+        decision_id = secrets.token_hex(8)
+        data.update(decision_id=decision_id, band=learned["band"])
+        if verdict != "paid_unprotected":  # remembered so the attacker engine can label it later
+            learner.remember(decision_id, {
+                "verdict": verdict, "band": learned["band"], "levels": learned["levels"], "origin": origin,
+                "path": decision["path"], "req": req.model_dump(), "context": context, "catalog_price": price,
+                "failed": [c["id"] for c in failed]})
+        if not arena:
+            STATS["checked"] += 1
 
         if verdict == "blocked":
-            STATS["blocked"] += 1
-            STATS["by_check"][head["id"]] += 1
-            STATS["saved_usd"] = round(STATS["saved_usd"] + decision["amount_usd"], 6)
-            record("blocked", data)
-            return jsonify({"blocked": True, "check": head["id"], "reason": head["reason"],
-                            "failed": data["failed"]}), 403
+            if not arena:
+                STATS["blocked"] += 1
+                STATS["by_check"][head["id"]] += 1
+                STATS["saved_usd"] = round(STATS["saved_usd"] + decision["amount_usd"], 6)
+                record("blocked", data)
+            resp = jsonify({"blocked": True, "check": head["id"], "reason": head["reason"],
+                            "failed": data["failed"], "total_checks": len(policy.CHECKS),
+                            "decision_id": decision_id, "band": learned["band"]})
+            resp.status_code = 403
+            resp.headers["X-Decision-Id"] = decision_id
+            return resp
 
         # 2) Only now record the payment (reserves the spend so a parallel request can't
         #    slip past the budget). Nothing is re-checked after this point.
-        STATS["unprotected" if verdict == "paid_unprotected" else "allowed"] += 1
+        if not arena:
+            STATS["unprotected" if verdict == "paid_unprotected" else "allowed"] += 1
+            record(verdict, data)
         if not failed:
             payees.pin(decision["origin"], req.payTo)
         entry = ledger.record(decision["mandate"]["task"], req.resource, decision["amount_usd"],
                               req.payTo, decision["origin"])
-        record(verdict, data)
 
     result, status = get_signature(body, req)
     if status != 200:
         ledger.remove(entry)
         record("failed", {"resource": req.resource, "signer_status": status, "error": result.get("error")})
-    return jsonify(result), status
+    resp = jsonify(result)
+    resp.status_code = status
+    resp.headers["X-Decision-Id"] = decision_id
+    resp.headers["X-Decision-Band"] = learned["band"]
+    return resp
 
 
 @app.post("/preview")
@@ -171,13 +196,72 @@ def preview():
         err = exc.errors()[0]
         return bad_request(f"invalid requirements: {err['loc']} {err['msg']}")
     context = body.get("context") or {}
-    price = catalog.reference_price(policy.shop_origin(req, context), policy.path_of(req.resource))
+    origin = policy.shop_origin(req, context)
+    price = catalog.reference_price(origin, policy.path_of(req.resource))
     with lock:
-        decision = policy.evaluate(req, context, ledger, payees, price)
+        band = learner.band(origin)
+        decision = policy.evaluate(req, context, ledger, payees, price, learner.tuning(band, learner.live_levels(band)))
     head = decision["headline"]
     return jsonify({"guard_enabled": STATE["enabled"], "would_block": bool(decision["failed"]),
                     "check": head["id"] if head else None, "reason": head["reason"] if head else "all checks passed",
                     "checks": decision["checks"], "amount_usd": decision["amount_usd"]})
+
+
+# --- learning: labels and training controls come only from the attacker engine (ARENA_TOKEN) ---
+
+def arena_ok() -> bool:
+    """True only if the caller sent the right ARENA_TOKEN. No token configured = closed."""
+    token = os.getenv("ARENA_TOKEN", "")
+    return bool(token) and hmac.compare_digest(token.encode(), request.headers.get("X-Arena-Token", "").encode())
+
+
+def denied():
+    return jsonify({"error": "missing or wrong ARENA_TOKEN"}), 403
+
+
+@app.post("/label")
+def label():
+    """Ground truth for one decision: {"decision_id", "truth": "attack" | "honest"}."""
+    if not arena_ok():
+        return denied()
+    body = request.get_json(silent=True) or {}
+    if body.get("truth") not in ("attack", "honest"):
+        return bad_request('truth must be "attack" or "honest"')
+    out = learner.label(str(body.get("decision_id")), body["truth"])
+    return jsonify(out) if out else (jsonify({"error": "unknown decision_id"}), 404)
+
+
+@app.get("/learning")
+def learning():
+    return jsonify(learner.snapshot())
+
+
+@app.post("/learning/explore")
+def learning_explore():
+    """Training turns exploring on (Thompson sampling) and off again (use the best safe settings)."""
+    if not arena_ok():
+        return denied()
+    learner.exploring = bool((request.get_json(silent=True) or {}).get("enabled"))
+    return jsonify({"exploring": learner.exploring})
+
+
+@app.post("/learning/reset")
+def learning_reset():
+    if not arena_ok():
+        return denied()
+    learner.reset()
+    return jsonify({"ok": True})
+
+
+@app.post("/arena/soft-reset")
+def arena_soft_reset():
+    """Between training heists: forget the ledger and pinned wallets (NOT what was learned)."""
+    if not arena_ok():
+        return denied()
+    with lock:
+        ledger.reset()
+        payees.reset()
+    return jsonify({"ok": True})
 
 
 @app.route("/mode", methods=["GET", "POST"])

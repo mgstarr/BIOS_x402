@@ -3,6 +3,7 @@ import re
 import pytest
 
 from defender import policy, server
+from defender.learner import BlueLearner
 from defender.origin import origin_of
 
 SHOP = "http://localhost:5001"
@@ -22,8 +23,9 @@ def fake_fetch(origin):
 
 
 @pytest.fixture(autouse=True)
-def fresh(monkeypatch):
+def fresh(monkeypatch, tmp_path):
     monkeypatch.setenv("MOCK_SIGNER", "true")
+    monkeypatch.setattr(server, "learner", BlueLearner(path=tmp_path / "learner.json"))  # nothing learned yet
     monkeypatch.setattr(server.catalog, "fetch", fake_fetch)
     server.reset_state()
     policy.update_rules(policy.default_rules())

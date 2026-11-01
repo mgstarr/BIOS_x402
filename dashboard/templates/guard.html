@@ -104,6 +104,48 @@
 </div>
 
 <section class="panel section-gap">
+  <div class="panel-head"><h2>The guard that teaches itself</h2>
+    <span class="small muted">Reinforcement learning against the self-learning attacker. Train it from the Attacker page.</span></div>
+  <div class="panel-body">
+    <div class="grid cols-2" style="align-items:start">
+      <div>
+        <p class="small">Every attack the attacker invents is labelled with the truth by the arena, and the guard
+          replays that bill under each setting of each rule to see which settings would have got it right. It then
+          uses, for each kind of shop, the strictest setting that never blocks an honest shop it has seen.
+          It can only tighten your rules, never loosen them, and wallets that took attack money are refused from then on.</p>
+        <div class="figures" style="grid-template-columns:repeat(4,1fr); margin:14px 0 0">
+          <div class="figure"><div class="label">Bills learned from</div><div class="value" id="b-labelled">0</div></div>
+          <div class="figure"><div class="label">Correct</div><div class="value" id="b-acc">–</div></div>
+          <div class="figure"><div class="label">Honest blocked</div><div class="value" id="b-fb">0</div></div>
+          <div class="figure"><div class="label">Attacks missed</div><div class="value" id="b-missed">0</div></div>
+        </div>
+      </div>
+      <div><span class="label">The race, round by round</span><div id="race" style="margin-top:6px"></div></div>
+    </div>
+    <div class="grid cols-2 section-gap" style="align-items:start">
+      <div>
+        <div class="row" style="margin-bottom:8px">
+          <span class="label grow">What it learned, by kind of shop</span>
+          <div class="seg" id="band-tabs" style="width:auto">
+            <button data-band="new">New shops</button><button data-band="trusted">Trusted</button><button data-band="low">Suspicious</button>
+          </div>
+        </div>
+        <table><thead><tr><th>Rule</th><th>Setting in use</th></tr></thead><tbody id="knobs"></tbody></table>
+        <p class="small muted" style="margin-top:6px">Highlighted = in use now. Crossed out = would block an honest shop the guard has seen.</p>
+      </div>
+      <div>
+        <span class="label">Wallets it learned to refuse</span>
+        <p class="small" id="bad-count" style="margin:6px 0"></p>
+        <div class="mono small muted" id="bad-wallets"></div>
+        <span class="label" style="display:block; margin-top:14px">Shops it knows</span>
+        <table><thead><tr><th>Shop</th><th class="num">Honest</th><th class="num">Attacks</th><th>Treated as</th></tr></thead>
+          <tbody id="trust"></tbody></table>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="panel section-gap">
   <div class="panel-head">
     <h2>Every bill, live</h2>
     <span class="small muted">From the agent, the shop page and the attackers. Click one to see all eight checks.</span>

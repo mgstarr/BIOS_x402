@@ -300,3 +300,63 @@ loadIntel();
 pollWire();
 setInterval(pollWire, 2000);
 setInterval(() => { if (!busy) loadIntel(); }, 6000);
+
+// --- 5. the attacker that teaches itself (reinforcement learning) ------------------------
+let trainTimer = null;
+
+function raceSeries(rounds) {
+  return [
+    { name: "Attacker got paid", cls: "attack", values: rounds.map((m) => m.attacker_success_rate) },
+    { name: "Guard correct", cls: "guard", values: rounds.map((m) => m.guard_accuracy) },
+  ];
+}
+
+async function loadLearning() {
+  const d = await api("learning");
+  if (d.error) { $("t-status").textContent = "Attack engine: " + d.error; return; }
+  const t = d.training, total = (t.rounds || 0) * ((t.heists_per_round || 0) + Math.max(4, Math.ceil((t.heists_per_round || 0) / 2)));
+  $("t-bar").style.width = t.running && total ? `${Math.min(100, (100 * t.done) / total)}%` : (t.rounds_log.length ? "100%" : "0");
+  $("t-start").disabled = t.running;
+  $("t-status").textContent = t.error ? "Stopped: " + t.error
+    : t.running ? `Training: round ${t.round} of ${t.rounds}, ${t.done} heists played…`
+    : t.rounds_log.length ? `Last run: ${t.rounds_log.length} rounds. Chain rolled back: ${t.reverted ? "yes, the wallet is untouched" : "no"}.`
+    : "Not trained yet in this session. What both sides learned before is kept on disk.";
+  lineChart($("race"), t.rounds_log.map((m) => m.round), raceSeries(t.rounds_log));
+
+  const fams = Object.entries(d.red.families).sort((a, b) => b[1].mean - a[1].mean);
+  $("families").innerHTML = fams.map(([f, v]) => `<div class="belief"><span>${esc(d.family_titles[f])}</span>
+    <div class="track"><div class="fill" style="width:${v.mean * 100}%"></div></div><span class="pct">${Math.round(v.mean * 100)}%</span></div>`).join("");
+  const tactics = Object.values(d.red.tactics).flatMap((ts) => Object.entries(ts)).filter(([, v]) => v.pulls)
+    .sort((a, b) => b[1].mean - a[1].mean).slice(0, 8);
+  $("tactics").innerHTML = tactics.length ? tactics.map(([id, v]) => `<tr title="${esc(d.tactic_plain[id] || "")}">
+      <td>${esc(tacticName(id))}</td><td class="num">${v.pulls}</td><td class="num ${v.breaches ? "gold-text" : ""}">${v.breaches}</td>
+      <td class="num">${Math.round(v.mean * 100)}%</td></tr>`).join("")
+    : '<tr><td colspan="4" class="empty">Nothing tried yet.</td></tr>';
+  $("discoveries").innerHTML = d.discoveries.length ? d.discoveries.slice(-6).reverse().map((x) =>
+      `<div class="discovery"><b class="gold-text">${esc(tacticName(x.tactic))}</b> · round ${x.round}, ${esc(x.band)} shop, ${money(x.amount_usd)}
+       <div class="muted">${esc(x.text.split(" The guard")[0])}</div></div>`).join("")
+    : '<p class="muted small">No holes found yet.</p>';
+  $("t-recent").innerHTML = t.recent.slice(-6).reverse().map((h) => {
+    const [label, cls] = h.truth === "honest" ? (h.blocked ? ["honest, blocked", "bad"] : ["honest, paid", "ok"])
+      : h.breach ? [`got ${money(h.gained_usd)}`, "warn"] : h.blocked ? ["caught", "bad"] : ["no money", "plain"];
+    return `<tr><td class="small">${h.truth === "honest" ? "Honest purchase" : esc(tacticName(h.tactic))}</td>
+      <td class="small muted">${esc(h.band || "")} shop</td><td><span class="tag ${cls}">${label}</span></td></tr>`;
+  }).join("") || '<tr><td class="empty">Nothing yet.</td></tr>';
+
+  clearTimeout(trainTimer);
+  trainTimer = setTimeout(loadLearning, t.running ? 1500 : 8000);
+}
+
+$("t-start").onclick = async () => {
+  const r = await api("train", { rounds: +$("t-rounds").value, heists: +$("t-heists").value });
+  if (r.error) $("t-status").textContent = r.error;
+  loadLearning();
+};
+$("t-stop").onclick = async () => { await api("train/stop", {}); loadLearning(); };
+$("t-reset").onclick = async () => {
+  if (!confirm("Forget everything the attacker and the guard have learned?")) return;
+  const r = await api("learning/reset", {});
+  if (r.error) $("t-status").textContent = r.error;
+  loadLearning();
+};
+loadLearning();

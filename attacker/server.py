@@ -7,6 +7,7 @@ import requests
 from flask import Flask, jsonify, request
 
 from attacker import evaluator, runner
+from attacker.rl import trainer
 from attacker.attacks import AGENT, ATTACKER, ATTACKS, get
 from contracts.events import Event, EventLog
 
@@ -132,6 +133,42 @@ def reset():
     if not runner.MOCK and runner.chain_up():
         runner.refill(AGENT, START_USD)
     return wallet()
+
+
+# --- the learning arena: red (attacker) vs blue (guard) -----------------------------------
+
+@app.post("/train")
+def train():
+    """Start training in the background: {"rounds": 1-200, "heists": 1-100 per round}."""
+    body = request.get_json(silent=True) or {}
+    try:
+        rounds, heists = int(body.get("rounds", 5)), int(body.get("heists", 10))
+    except (TypeError, ValueError):
+        return jsonify({"error": "rounds and heists must be whole numbers"}), 400
+    if not (1 <= rounds <= 200 and 1 <= heists <= 100):
+        return jsonify({"error": "rounds must be 1-200 and heists 1-100"}), 400
+    ok, msg = trainer.start(rounds, heists)
+    return jsonify({"started": ok, "message": msg, "rounds": rounds, "heists": heists}), (202 if ok else 409)
+
+
+@app.post("/train/stop")
+def train_stop():
+    trainer.stop()
+    return jsonify({"stopping": True})
+
+
+@app.get("/learning")
+def learning():
+    return jsonify(trainer.learning_state())
+
+
+@app.post("/learning/reset")
+def learning_reset():
+    """Forget everything both sides learned (and the discoveries list stays as a record)."""
+    if trainer.STATUS["running"]:
+        return jsonify({"error": "training is running; stop it first"}), 409
+    trainer.reset_all()
+    return jsonify({"ok": True})
 
 
 @app.get("/events")

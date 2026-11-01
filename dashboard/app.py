@@ -44,6 +44,7 @@ PRODUCTS = {
     "/api/stock": ("Share price", "A company's share price today, its day range, volume and size."),
     "/api/fx": ("Exchange rate", "How much one currency buys in another, and today's change."),
     "/api/news": ("Headlines", "The top stories right now for one topic."),
+    "/api/price-peak": ("Coin price, peak rate", ""),
     "/compromised/wrong-wallet": ("Coin price, hacked route", ""),
     "/compromised/lookalike": ("Coin price, hacked route", ""),
 }
@@ -70,7 +71,8 @@ def call(method, url, timeout=5, **kwargs):
     except ValueError:
         return None, f"{url.split('/')[2]} answered {r.status_code} without JSON"
     if r.status_code >= 400 and not (isinstance(body, dict) and body.get("blocked")):
-        return None, (body.get("error") if isinstance(body, dict) else None) or f"error {r.status_code}"
+        msg = (body.get("error") or body.get("message")) if isinstance(body, dict) else None
+        return None, msg or f"error {r.status_code}"
     return body, None
 
 
@@ -198,7 +200,8 @@ def services():
     if err:
         return None, err
     return [{**c, "name": PRODUCTS.get(c["path"], (c["path"],))[0],
-             "about": PRODUCTS.get(c["path"], (None, c.get("description")))[1]} for c in catalog], None
+             "about": PRODUCTS.get(c["path"], (None, c.get("description")))[1]}
+            for c in catalog if c["path"] in PRODUCTS], None  # the peak-rate route is for the guard, not the shelf
 
 
 @app.get("/api/provider")
@@ -413,6 +416,31 @@ def assess():
 def reset():
     """Refill the AI wallet to $100 and empty the attacker's wallet (local chain only)."""
     return reply(*call("POST", f"{ATTACKER_URL}/reset", timeout=10))
+
+
+# --- the learning arena (both pages) ---------------------------------------------------------
+
+@app.get("/api/learning")
+def learning():
+    """Training progress, what the attacker believes works, what the guard learned, discoveries."""
+    return reply(*call("GET", f"{ATTACKER_URL}/learning", timeout=5))
+
+
+@app.post("/api/train")
+def train():
+    body = request.get_json(silent=True) or {}
+    return reply(*call("POST", f"{ATTACKER_URL}/train", json={"rounds": body.get("rounds", 5),
+                                                               "heists": body.get("heists", 10)}))
+
+
+@app.post("/api/train/stop")
+def train_stop():
+    return reply(*call("POST", f"{ATTACKER_URL}/train/stop"))
+
+
+@app.post("/api/learning/reset")
+def learning_reset():
+    return reply(*call("POST", f"{ATTACKER_URL}/learning/reset"))
 
 
 def create_app() -> Flask:

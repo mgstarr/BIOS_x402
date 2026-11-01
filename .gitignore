@@ -2,3 +2,6 @@
 .env
 __pycache__/
 logs/
+defender/learner_state.json
+attacker/rl_state.json
+*.tmp

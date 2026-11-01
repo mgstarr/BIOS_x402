@@ -34,6 +34,10 @@ def main() -> None:
         from attacker.server import app
 
         app.run(host="0.0.0.0", port=7004)
+    elif service == "newshop":  # honest brand-new shop (port 5003), keeps the learning guard honest
+        from shops.newshop import run
+
+        run()
     elif service == "defender":  # payment guard in front of the signer (port 7003)
         from defender.server import run
 

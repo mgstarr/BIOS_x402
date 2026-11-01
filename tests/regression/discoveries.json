@@ -1,0 +1,35 @@
+[
+  {
+    "id": "d001",
+    "ts": 1793506549,
+    "round": 2,
+    "family": "wrong_party",
+    "tactic": "look:5/3",
+    "band": "new",
+    "tx": "0x9629c91322cbd7bd45d5d7b472f431b695bc5170cf7f694d23b7eb24feeb043a",
+    "amount_usd": 0.01,
+    "text": "A 1\u00a2 bill paid to a wallet that copies the first 5 and last 3 characters of TickToll's. The guard let it through for a new shop: 1\u00a2 of real test USDC reached an attacker wallet (tx 0x9629c91322cbd7bd45d5d7b472f431b695bc5170cf7f694d23b7eb24feeb043a, rolled back after training)."
+  },
+  {
+    "id": "d002",
+    "ts": 1793506552,
+    "round": 2,
+    "family": "wrong_party",
+    "tactic": "look:6/4",
+    "band": "new",
+    "tx": "0xc6bef41d5c32133f8c32b39c7487b90afa2907cd71caad2beac7a6432abc594f",
+    "amount_usd": 0.01,
+    "text": "A 1\u00a2 bill paid to a wallet that copies the first 6 and last 4 characters of TickToll's. The guard let it through for a new shop: 1\u00a2 of real test USDC reached an attacker wallet (tx 0xc6bef41d5c32133f8c32b39c7487b90afa2907cd71caad2beac7a6432abc594f, rolled back after training)."
+  },
+  {
+    "id": "d003",
+    "ts": 1793506578,
+    "round": 5,
+    "family": "wrong_party",
+    "tactic": "fresh:0.02",
+    "band": "new",
+    "tx": "0x419c24c6b0b801216fc930cd8e9aa0a58d9810910d5c732b6f173ba4f9255a6a",
+    "amount_usd": 0.02,
+    "text": "A brand-new shop bills 2\u00a2 and pays a brand-new wallet, so no blocklist knows it. The guard let it through for a new shop: 2\u00a2 of real test USDC reached an attacker wallet (tx 0x419c24c6b0b801216fc930cd8e9aa0a58d9810910d5c732b6f173ba4f9255a6a, rolled back after training)."
+  }
+]
