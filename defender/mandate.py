@@ -17,13 +17,10 @@ def parse_mandate(context: dict) -> dict:
 
 
 def money(usd: float) -> str:
-    """0.01 -> '1 cent', 0.4 -> '40 cents', 2.5 -> '$2.50'."""
-    cents = round(usd * 100, 2)
+    """0.02 -> '2¢', 0.95 -> '95¢', 0.005 -> '0.5¢', 1 -> '$1.00', 90 -> '$90.00'."""
     if usd >= 1:
         return f"${usd:,.2f}"
-    if cents == int(cents):
-        return f"{int(cents)} cent" + ("" if int(cents) == 1 else "s")
-    return f"{cents:g} cents"
+    return f"{round(usd * 100, 2):g}¢"
 
 
 def check_mandate(amount_usd: float, mandate: dict, spent_usd: float) -> tuple[bool, str]:

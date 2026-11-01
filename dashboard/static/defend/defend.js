@@ -26,28 +26,47 @@ async function toggle() {
   if (!r.error) setSwitch(r.enabled);
 }
 
-function cents(d) {
-  if (d.amount_cents != null) return d.amount_cents;
-  if (d.amount_usd != null) return Math.round(d.amount_usd * 100);
+// 0.02 -> "2¢", 0.95 -> "95¢", 90 -> "$90.00"
+function money(usd) {
+  const n = Number(usd || 0);
+  if (n >= 1) return "$" + n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return parseFloat((n * 100).toFixed(2)) + "¢";
+}
+
+function usd(d) {
+  if (d.amount_usd != null) return d.amount_usd;
+  if (d.amount_cents != null) return d.amount_cents / 100;
   return 0;
 }
+
+function esc(s) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g,
+    (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+const PILL = { allowed: "ALLOWED", blocked: "BLOCKED", paid_unprotected: "PAID (guard OFF)" };
 
 function row(e) {
   const d = e.data || {};
   const el = document.createElement("div");
   el.className = "row";
   const checks = (d.checks || []).map((c) =>
-    `<span class="${c.ok ? "pass" : "fail"}">${c.ok ? "✓" : "✗"} ${c.name}: ${c.reason || ""}</span>`).join("");
-  el.innerHTML = `<div class="main"><span>${d.shop || "shop"}</span><span class="grow">${d.item || ""}</span>
-    <span>${cents(d)}c</span><span>${short(d.payee || d.payTo)}</span>
-    <span class="pill ${e.type}">${e.type.toUpperCase()}</span></div><div class="checks">${checks}</div>`;
+    `<span class="${c.ok ? "pass" : "fail"}">${c.ok ? "✓" : "✗"} ${esc(c.name)}: ${esc(c.reason || "")}</span>`).join("");
+  const names = Object.fromEntries((d.checks || []).map((c) => [c.id || c.name, c.name]));
+  const would = (d.would_have_blocked || []).map((id) => esc(names[id] || id)).join(", ");
+  const note = e.type === "paid_unprotected" && would
+    ? `<div class="would">Would have been blocked by: ${would}</div>` : "";
+  el.innerHTML = `<div class="main"><span>${esc(d.shop || "shop")}</span><span class="grow">${esc(d.item || "")}</span>
+    <span>${money(usd(d))}</span><span>${short(d.payee || d.payTo)}</span>
+    <span class="pill ${e.type}">${PILL[e.type] || e.type.toUpperCase()}</span></div>${note}
+    <div class="checks">${checks}</div>`;
   return el;
 }
 
 async function pollFeed() {
   const ev = await api("events");
   if (!Array.isArray(ev)) return;
-  const items = ev.filter((e) => e.type === "allowed" || e.type === "blocked").slice(-15).reverse();
+  const items = ev.filter((e) => e.type in PILL).slice(-15).reverse();
   const feed = $("feed");
   feed.replaceChildren(...items.map(row));
   if (!items.length) feed.innerHTML = '<div class="empty">Waiting for payments...</div>';
@@ -60,14 +79,15 @@ async function pollStats() {
   $("t-checked").textContent = s.checked ?? 0;
   $("t-blocked").textContent = s.blocked ?? 0;
   $("t-allowed").textContent = s.allowed ?? 0;
-  $("t-saved").textContent = "$" + Number(s.saved_usd ?? s.money_saved ?? 0).toFixed(2);
+  $("t-unprotected").textContent = s.unprotected ?? 0;
+  $("t-saved").textContent = money(s.saved_usd ?? s.money_saved ?? 0);
   if (s.simulated) $("sim").hidden = false;
 }
 
 function card(title, cls, s) {
   return `<div class="card ${cls}"><h3>${title}</h3>
     <div>Attacks blocked: ${s.blocked}</div><div>Attacks stolen: ${s.stolen ?? 0}</div>
-    <div>Money lost: $${Number(s.lost_usd).toFixed(2)}</div>${s.errors ? `<div>Errors: ${s.errors}</div>` : ""}
+    <div>Money lost: ${money(s.lost_usd)}</div>${s.errors ? `<div>Errors: ${s.errors}</div>` : ""}
     <div>Honest allowed: ${s.honest_allowed}/${s.honest_total ?? s.honest_allowed}</div></div>`;
 }
 

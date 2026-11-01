@@ -1,9 +1,9 @@
 """Policy engine: decides whether a proposed payment is allowed under current rules.
 
-Plain code only, no LLM. Every check returns (ok, plain-English reason). They run in this
-order and the FIRST failure is the one reported as the block reason:
+Plain code only, no LLM. Every check returns (ok, plain-English reason). All checks run once,
+before anything is recorded; the headline reason is the first failure in this priority order:
 
-  origin -> asset -> payee -> cap -> price -> mandate -> expiry -> duplicate
+  origin -> asset -> payee/lookalike -> price -> mandate -> spending cap -> expiry -> duplicate
 """
 
 import re
@@ -29,16 +29,17 @@ CATALOG_TTL_S = 60
 TICKTOLL_ORIGIN = "http://localhost:5001"
 TICKTOLL_PAY_TO = "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC"
 TRUSTED_PAYEES = {TICKTOLL_ORIGIN: TICKTOLL_PAY_TO}
+REFERENCE_ITEM = "/api/price"  # TickToll's basic coin price: the yardstick for unknown items
 SHOP_NAMES = {TICKTOLL_ORIGIN: "TickToll", "http://localhost:5002": "EvilData"}
 
-# (id used in API/stats, label shown on the dashboard -- matches Person B's names)
+# (id used in API/stats, label shown on the dashboard), in headline-priority order.
 CHECKS = [
     ("origin", "origin"),
     ("asset", "asset"),
     ("payee", "payee"),
-    ("cap", "drain cap"),
     ("price", "price"),
     ("mandate", "mandate"),
+    ("cap", "spending cap"),
     ("expiry", "expiry"),
     ("duplicate", "duplicate"),
 ]
@@ -138,6 +139,20 @@ class CatalogCache:
         with self._lock:
             self._cache.clear()
 
+    def reference_price(self, origin: str | None, path: str) -> float | None:
+        """The 'usual' price, taken ONLY from a trusted shop's catalog (a scam shop's own catalog
+        always agrees with its own bill). Trusted shop: its price for this path. Any other shop:
+        the trusted shop's price for the same item name (/evil/report -> /api/report), else its
+        basic coin-price item (/api/price)."""
+        if origin in TRUSTED_PAYEES:
+            return self.price(origin, path)
+        name = path.rstrip("/").rsplit("/", 1)[-1]
+        for ref_path in (f"/api/{name}", REFERENCE_ITEM):
+            ref = self.price(TICKTOLL_ORIGIN, ref_path)
+            if ref is not None:
+                return ref
+        return None
+
 
 # --- the checks ---------------------------------------------------------------------------
 
@@ -167,8 +182,8 @@ def check_payee(origin: str | None, pay_to: str, book: PayeeBook) -> tuple[bool,
 
 def check_cap(amount_usd: float) -> tuple[bool, str]:
     if amount_usd > DRAIN_CAP_USD + 1e-9:
-        return False, f"This bill is {money(amount_usd)}, more than the {money(DRAIN_CAP_USD)} safety cap"
-    return True, f"{money(amount_usd)} is under the {money(DRAIN_CAP_USD)} cap"
+        return False, f"This bill is {money(amount_usd)}, more than the {money(DRAIN_CAP_USD)} spending cap"
+    return True, f"{money(amount_usd)} is under the {money(DRAIN_CAP_USD)} spending cap"
 
 
 def ratio_text(r: float) -> str:
@@ -207,7 +222,10 @@ def check_duplicate(resource: str, ledger: Ledger) -> tuple[bool, str]:
 
 def evaluate(req: PaymentRequirements, context: dict, ledger: Ledger, book: PayeeBook,
              catalog_price: float | None) -> dict:
-    """Run every check (so the dashboard can show them all); the first failure decides."""
+    """Run every check exactly once (call BEFORE recording the payment in the ledger).
+
+    "failed" lists every failed check in priority order; "headline" is the first of them.
+    """
     origin = shop_origin(req, context)
     amount_usd = to_usd(req.amount)
     mandate = parse_mandate(context)
@@ -215,14 +233,14 @@ def evaluate(req: PaymentRequirements, context: dict, ledger: Ledger, book: Paye
         "origin": check_origin(context.get("intended_url"), context.get("final_url")),
         "asset": check_asset(req),
         "payee": check_payee(origin, req.payTo, book),
-        "cap": check_cap(amount_usd),
         "price": check_price(amount_usd, catalog_price),
         "mandate": check_mandate(amount_usd, mandate, ledger.spent(mandate["task"])),
+        "cap": check_cap(amount_usd),
         "expiry": check_expiry(req.maxTimeoutSeconds),
         "duplicate": check_duplicate(req.resource, ledger),
     }
     checks = [{"id": cid, "name": name, "ok": results[cid][0], "reason": results[cid][1]}
               for cid, name in CHECKS]
-    failed = next((c for c in checks if not c["ok"]), None)
-    return {"checks": checks, "failed": failed, "origin": origin, "path": path_of(req.resource),
-            "amount_usd": amount_usd, "mandate": mandate}
+    failed = [c for c in checks if not c["ok"]]
+    return {"checks": checks, "failed": failed, "headline": failed[0] if failed else None,
+            "origin": origin, "path": path_of(req.resource), "amount_usd": amount_usd, "mandate": mandate}

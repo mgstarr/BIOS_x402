@@ -36,7 +36,7 @@ STATE = {"enabled": True}
 
 
 def fresh_stats() -> dict:
-    return {"checked": 0, "allowed": 0, "blocked": 0, "saved_usd": 0.0,
+    return {"checked": 0, "allowed": 0, "blocked": 0, "unprotected": 0, "saved_usd": 0.0,
             "by_check": {cid: 0 for cid, _ in policy.CHECKS}}
 
 
@@ -80,20 +80,28 @@ def get_signature(body: dict, req: PaymentRequirements) -> tuple[dict, int]:
         return {"error": f"signer returned non-JSON (status {r.status_code})"}, 502
 
 
-def event_data(req, context, decision, guard_on) -> dict:
-    """Everything the dashboard and attacker need about one decision."""
-    failed = decision["failed"]
-    return {
+def event_data(req, context, decision, verdict) -> dict:
+    """Everything the dashboard and attacker need about one decision.
+
+    The checks logged here are exactly the ones the verdict was based on (run once, before
+    the payment was recorded in the ledger)."""
+    head, failed_ids = decision["headline"], [c["id"] for c in decision["failed"]]
+    data = {
+        "verdict": verdict,
         "shop": policy.shop_name(decision["origin"]), "origin": decision["origin"],
         "item": decision["path"], "resource": req.resource,
         "amount": req.amount, "amount_usd": decision["amount_usd"],
         "amount_cents": round(decision["amount_usd"] * 100, 4),
-        "payee": req.payTo, "guard": "on" if guard_on else "off",
-        "check": failed["id"] if failed else None,
-        "reason": failed["reason"] if failed else "all checks passed",
-        "checks": decision["checks"], "mandate": decision["mandate"],
+        "payee": req.payTo, "guard": "off" if verdict == "paid_unprotected" else "on",
+        "check": head["id"] if head else None,
+        "reason": head["reason"] if head else "all checks passed",
+        "failed": failed_ids,
+        "checks": [dict(c) for c in decision["checks"]], "mandate": decision["mandate"],
         "bill": req.model_dump(by_alias=True), "context": context,
     }
+    if verdict == "paid_unprotected":
+        data["would_have_blocked"] = failed_ids
+    return data
 
 
 @app.post("/sign")
@@ -113,28 +121,36 @@ def sign():
         return bad_request("context must be an object")
 
     # Network call to the shop's /catalog happens outside the lock.
-    price = catalog.price(policy.shop_origin(req, context), policy.path_of(req.resource))
+    price = catalog.reference_price(policy.shop_origin(req, context), policy.path_of(req.resource))
 
     with lock:
+        # 1) Run every check ONCE, before this payment touches the ledger.
         decision = policy.evaluate(req, context, ledger, payees, price)
-        guard_on, failed = STATE["enabled"], decision["failed"]
-        data = event_data(req, context, decision, guard_on)
+        head, failed = decision["headline"], decision["failed"]
+        guard_on = STATE["enabled"]
+        if not guard_on:
+            verdict = "paid_unprotected"
+        else:
+            verdict = "blocked" if failed else "allowed"
+        data = event_data(req, context, decision, verdict)
         STATS["checked"] += 1
-        if failed and guard_on:
+
+        if verdict == "blocked":
             STATS["blocked"] += 1
-            STATS["by_check"][failed["id"]] += 1
+            STATS["by_check"][head["id"]] += 1
             STATS["saved_usd"] = round(STATS["saved_usd"] + decision["amount_usd"], 6)
             record("blocked", data)
-            return jsonify({"blocked": True, "check": failed["id"], "reason": failed["reason"]}), 403
-        STATS["allowed"] += 1
-        if failed:  # guard OFF: forward anyway, but show what it would have caught
-            data["would_block"] = {"check": failed["id"], "reason": failed["reason"]}
-        else:
+            return jsonify({"blocked": True, "check": head["id"], "reason": head["reason"],
+                            "failed": data["failed"]}), 403
+
+        # 2) Only now record the payment (reserves the spend so a parallel request can't
+        #    slip past the budget). Nothing is re-checked after this point.
+        STATS["unprotected" if verdict == "paid_unprotected" else "allowed"] += 1
+        if not failed:
             payees.pin(decision["origin"], req.payTo)
-        # Reserve the spend now so a parallel request can't slip past the budget.
         entry = ledger.record(decision["mandate"]["task"], req.resource, decision["amount_usd"],
                               req.payTo, decision["origin"])
-        record("allowed", data)
+        record(verdict, data)
 
     result, status = get_signature(body, req)
     if status != 200:

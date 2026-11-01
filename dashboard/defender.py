@@ -16,8 +16,8 @@ ATTACKER_URL = os.getenv("ATTACKER_URL", "http://localhost:7004")
 bp = Blueprint("defend", __name__, url_prefix="/defend",
                template_folder="templates/defend", static_folder="static/defend", static_url_path="/static")
 
-SIM = {"guard": True, "feed": [], "checked": 0, "blocked": 0, "saved": 0.0}
-CHECKS = ["price", "drain cap", "payee", "asset", "expiry", "duplicate", "mandate"]
+SIM = {"guard": True, "feed": [], "checked": 0, "blocked": 0, "unprotected": 0, "saved": 0.0}
+CHECKS = ["price", "spending cap", "payee", "asset", "expiry", "duplicate", "mandate"]
 SIM_CASES = [("TickToll", "ETH price", 1, False, None), ("EvilData", "ETH price", 500, True, "price"),
              ("TickToll", "ETH sentiment", 1, False, None), ("Compromised", "ETH price", 1, True, "payee")]
 
@@ -25,15 +25,18 @@ SIM_CASES = [("TickToll", "ETH price", 1, False, None), ("EvilData", "ETH price"
 def sim_event():
     shop, item, cents, bad, check = random.choice(SIM_CASES)
     blocked = bad and SIM["guard"]
+    kind = "blocked" if blocked else ("allowed" if SIM["guard"] else "paid_unprotected")
     checks = [{"name": c, "ok": not (bad and c == check), "reason": "ok" if not (bad and c == check) else f"{c} wrong"}
               for c in CHECKS]
     SIM["checked"] += 1
     SIM["blocked"] += blocked
+    SIM["unprotected"] += kind == "paid_unprotected"
     SIM["saved"] += cents / 100 if blocked else 0
-    SIM["feed"] = (SIM["feed"] + [{"type": "blocked" if blocked else "allowed", "ts": time.time(), "simulated": True,
-                   "data": {"shop": shop, "item": item, "amount_cents": cents,
-                            "payee": "0x90F79bf6EB2c4f870365E785982E1f101E93b906" if bad else "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
-                            "checks": checks}}])[-30:]
+    data = {"shop": shop, "item": item, "amount_cents": cents, "checks": checks,
+            "payee": "0x90F79bf6EB2c4f870365E785982E1f101E93b906" if bad else "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC"}
+    if kind == "paid_unprotected":
+        data["would_have_blocked"] = [check] if bad else []
+    SIM["feed"] = (SIM["feed"] + [{"type": kind, "ts": time.time(), "simulated": True, "data": data}])[-30:]
 
 
 def sim_suite():
@@ -58,7 +61,8 @@ def index():
 @bp.get("/api/stats")
 def stats():
     if MOCK:
-        return jsonify({"checked": SIM["checked"], "blocked": SIM["blocked"], "allowed": SIM["checked"] - SIM["blocked"],
+        return jsonify({"checked": SIM["checked"], "blocked": SIM["blocked"], "allowed": SIM["checked"] - SIM["blocked"] - SIM["unprotected"],
+                        "unprotected": SIM["unprotected"],
                         "saved_usd": round(SIM["saved"], 2), "simulated": True})
     return proxy("GET", DEFENDER_URL, "/stats")
 

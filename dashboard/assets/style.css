@@ -1,3 +1,4 @@
+[hidden] { display: none !important; }  /* .btn's display:inline-block must not beat `hidden` */
 /* x402 Red/Blue dashboard. Big type and strong contrast so it reads from 3 m on a projector. */
 :root {
   --bg: #0f1115; --panel: #1a1d24; --line: #2c313b; --text: #f2f4f8; --muted: #9aa3b2;

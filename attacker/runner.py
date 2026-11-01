@@ -106,12 +106,12 @@ def latest_decision():
     except Exception:
         return None
     for e in reversed(events):
-        if e.get("type") in ("allowed", "blocked"):
+        if e.get("type") in ("allowed", "blocked", "paid_unprotected"):
             return {"verdict": e["type"], **e.get("data", {})}
     return None
 
 
-CHECKS = ["price", "drain cap", "payee", "asset", "expiry", "duplicate", "mandate"]
+CHECKS = ["price", "spending cap", "payee", "asset", "expiry", "duplicate", "mandate"]
 
 
 def simulate(attack):
