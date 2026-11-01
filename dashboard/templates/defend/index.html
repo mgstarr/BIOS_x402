@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>TickToll Defender</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="{{ url_for('defend.static', filename='defend.css') }}">
+</head>
+<body>
+<header>
+  <h1>TickToll Defender</h1>
+  <div id="sim" class="sim" {% if not mock %}hidden{% endif %}>SIMULATED DATA</div>
+</header>
+
+<section class="top">
+  <button id="switch" class="switch on" type="button"><span id="switch-label">Guard ON</span></button>
+  <div class="tiles">
+    <div class="tile"><div class="num" id="t-checked">0</div><div class="lbl">Checked</div></div>
+    <div class="tile"><div class="num" id="t-blocked">0</div><div class="lbl">Blocked</div></div>
+    <div class="tile"><div class="num" id="t-allowed">0</div><div class="lbl">Allowed</div></div>
+    <div class="tile"><div class="num" id="t-unprotected">0</div><div class="lbl">Paid, guard OFF</div></div>
+    <div class="tile"><div class="num" id="t-saved">0¢</div><div class="lbl">Money saved</div></div>
+  </div>
+</section>
+
+<section>
+  <h2>Live feed</h2>
+  <div id="feed" class="feed"></div>
+</section>
+
+<section>
+  <h2>Scorecard</h2>
+  <button id="run" class="run" type="button">Run full test</button>
+  <div id="score" class="score"></div>
+</section>
+<script src="{{ url_for('defend.static', filename='defend.js') }}"></script>
+</body>
+</html>

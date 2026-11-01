@@ -1,4 +1,4 @@
-"""Entry point: `python app.py <service>` starts the named service (agent, signer, ...)."""
+"""Entry point: `python app.py <service>` starts the named service: shop, evil, dashboard, agent, attacker, defender."""
 
 import sys
 
@@ -15,6 +15,27 @@ def main() -> None:
     service = sys.argv[1]
     if service == "shop":
         from shops.server import run
+
+        run()
+    elif service == "evil":
+        from shops.malicious import run
+
+        run()
+    elif service == "dashboard":
+        from dashboard.app import run
+
+        run()
+    elif service == "agent":  # Person A: agent (port 7000)
+        from agent.agent import app, payment_mode
+
+        print(payment_mode())
+        app.run(host="0.0.0.0", port=7000)
+    elif service == "attacker":  # Person B: attacker engine (port 7004)
+        from attacker.server import app
+
+        app.run(host="0.0.0.0", port=7004)
+    elif service == "defender":  # payment guard in front of the signer (port 7003)
+        from defender.server import run
 
         run()
     else:
