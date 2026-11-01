@@ -366,8 +366,8 @@ let trainTimer = null;
 
 function raceSeries(rounds) {
   return [
-    { name: "Attacker got paid", cls: "attack", values: rounds.map((m) => m.attacker_success_rate) },
-    { name: "Guard correct", cls: "guard", values: rounds.map((m) => m.guard_accuracy) },
+    { name: "Attacker got paid (5-round avg)", cls: "attack", values: rollingAvg(rounds.map((m) => m.attacker_success_rate)) },
+    { name: "Guard correct (5-round avg)", cls: "guard", values: rollingAvg(rounds.map((m) => m.guard_accuracy)) },
   ];
 }
 

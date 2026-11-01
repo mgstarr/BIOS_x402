@@ -81,23 +81,36 @@ async function refreshStatus() {
 refreshStatus();
 setInterval(refreshStatus, 3000);
 
+// --- smoothing: each round's accuracy/success rate is measured on only that round's handful
+// of heists, so it swings a lot from sample noise alone. A trailing average over real rounds
+// (never invented numbers) shows the actual trend instead of single-round luck.
+function rollingAvg(values, window = 5) {
+  return values.map((_, i) => {
+    const slice = values.slice(Math.max(0, i - window + 1), i + 1).filter((v) => v != null);
+    return slice.length ? slice.reduce((a, b) => a + b, 0) / slice.length : null;
+  });
+}
+
 // --- before vs after: the headline number for a demo ---------------------------------------
-// raceSummary(el, rounds): round 1 vs the latest round, for attacker success and guard accuracy.
+// raceSummary(el, rounds): round 1 (raw, the honest "before training" baseline) vs a trailing
+// average of the most recent rounds (smoothed, so one unlucky round doesn't misstate "now").
 // Survives a service restart (the rounds_log itself is persisted server-side), so this keeps
 // telling the true story even if the stack gets restarted right before showing it to someone.
 function raceSummary(el, rounds) {
   if (rounds.length < 2) { el.innerHTML = ""; return; }
   const first = rounds[0], last = rounds[rounds.length - 1];
+  const attackNow = rollingAvg(rounds.map((m) => m.attacker_success_rate)).at(-1);
+  const guardNow = rollingAvg(rounds.map((m) => m.guard_accuracy)).at(-1);
   const tile = (label, a, b, lowerIsBetter) => {
     const pct = (v) => (v == null ? "–" : Math.round(v * 100) + "%");
     const improved = a != null && b != null && (lowerIsBetter ? b < a : b > a);
     return `<div class="figure"><div class="label">${esc(label)}</div>
       <div class="value">${pct(a)} <span class="muted" style="font-size:.6em">&rarr;</span>
         <span class="${improved ? "gold-text" : ""}">${pct(b)}</span></div>
-      <div class="sub">round 1 vs round ${last.round}, ${rounds.length} rounds played</div></div>`;
+      <div class="sub">round 1 vs last ${Math.min(5, rounds.length)}-round avg, of ${rounds.length} played</div></div>`;
   };
-  el.innerHTML = tile("Attacker success rate", first.attacker_success_rate, last.attacker_success_rate, true)
-    + tile("Guard accuracy", first.guard_accuracy, last.guard_accuracy, false);
+  el.innerHTML = tile("Attacker success rate", first.attacker_success_rate, attackNow, true)
+    + tile("Guard accuracy", first.guard_accuracy, guardNow, false);
 }
 
 // --- the learning race chart -------------------------------------------------------------

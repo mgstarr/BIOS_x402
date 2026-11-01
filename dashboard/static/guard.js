@@ -377,8 +377,8 @@ async function loadLearned() {
   const rounds = d.training.rounds_log;
   raceSummary($("race-summary"), rounds);
   lineChart($("race"), rounds.map((m) => m.round), [
-    { name: "Attacker got paid", cls: "attack", values: rounds.map((m) => m.attacker_success_rate) },
-    { name: "Guard correct", cls: "guard", values: rounds.map((m) => m.guard_accuracy) },
+    { name: "Attacker got paid (5-round avg)", cls: "attack", values: rollingAvg(rounds.map((m) => m.attacker_success_rate)) },
+    { name: "Guard correct (5-round avg)", cls: "guard", values: rollingAvg(rounds.map((m) => m.guard_accuracy)) },
   ]);
   const bad = Object.entries(d.blue.bad_wallets).sort((a, b) => b[1].hits - a[1].hits);
   $("bad-count").textContent = bad.length ? `${bad.length} wallet${bad.length > 1 ? "s" : ""} took attack money and will not be paid again.`
