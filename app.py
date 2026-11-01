@@ -21,6 +21,10 @@ def main() -> None:
         from shops.malicious import run
 
         run()
+    elif service == "dashboard":
+        from dashboard.app import run
+
+        run()
     else:
         print(f"TODO: start service '{service}'")
 
