@@ -126,6 +126,11 @@ def settle_route():
     return jsonify(SettlementResponse(success=True, transaction=tx, payer=auth.from_).model_dump())
 
 
+@app.get("/health")
+def health():
+    return jsonify({"ok": True, "service": "facilitator"})
+
+
 @app.get("/events")
 def events():
     return jsonify([e.model_dump() for e in log.last(100)])

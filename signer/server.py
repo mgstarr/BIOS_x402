@@ -56,6 +56,11 @@ def address():
     return jsonify({"address": ACCOUNT.address})
 
 
+@app.get("/health")
+def health():
+    return jsonify({"ok": True, "service": "signer"})
+
+
 @app.get("/events")
 def events():
     return jsonify([e.model_dump() for e in log.last(100)])
